@@ -18,7 +18,8 @@ bedagent 是给“没有手脚的思想者”准备的 Agent 外骨骼。
 - 能短反馈就不要长报告；
 - 能自动推进就不要让用户盯着；
 - 能在沙盒里试错就不要碰真实世界；
-- 只有高风险动作才把人拉回来确认。
+- 只有高风险动作才把人拉回来确认；
+- 能剪掉低价值分支就不要浪费注意力。
 
 ## 和 sofagent 的关系
 
@@ -58,6 +59,10 @@ bedagent = sofagent 的纪律层 + 思想捕获 + Agent 大脑 + 执行沙盒 + 
 
 先允许 Agent 在“脑子里”乱想；再允许它在沙盒里试错；最后才允许它触碰真实世界。
 
+但“想”也不能无限发散。bedagent 的节奏是：
+
+> 想的时候快，剪枝要狠，动手前慢，执行要稳。
+
 ## 当前仓库状态
 
 根目录现在是 bedagent 的新产品设计区。历史实现和参考代码放在：
@@ -74,6 +79,7 @@ ref/ref_repos/bedagent-bootstrap/    # 早期 bedagent 历史实现快照
 | 文档 | 说明 |
 |------|------|
 | [docs/philosophy.md](docs/philosophy.md) | sofagent 与 bedagent 的哲学对比 |
+| [docs/laziness-and-pruning.md](docs/laziness-and-pruning.md) | 懒的分型、快速思考与剪枝原则 |
 | [docs/research-map.md](docs/research-map.md) | 相关工作研究地图：语音、PKM、Agent、Guardrails、沙盒 |
 | [docs/capability-map.md](docs/capability-map.md) | bedagent 应该有哪些功能 |
 | [docs/sandbox-brain.md](docs/sandbox-brain.md) | Agent 大脑、推演沙盒、执行沙盒 |
