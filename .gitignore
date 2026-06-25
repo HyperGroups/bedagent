@@ -22,3 +22,8 @@ Thumbs.db
 # JavaScript dependencies / build output
 node_modules/
 bedagent-audit/dist/
+
+# Local reference repositories/worktrees.
+# Keep only the directory contract; never commit referenced source trees.
+/ref/ref_repos/*
+!/ref/ref_repos/.gitkeep
