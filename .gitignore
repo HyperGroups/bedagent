@@ -1,9 +1,5 @@
-# bedagent runtime data
+# Local runtime data
 .bedagent/
-
-# ao compose 运行时产物（任务编排生成的工作流文件）
-# 只忽略仓库根目录的 workflows/，不影响 .github/workflows/
-/workflows/
 
 # IDE / editor
 .workbuddy/
@@ -16,12 +12,12 @@
 # OS
 Thumbs.db
 
-# agency-orchestrator local config
+# Local config
 .env
 
 # JavaScript dependencies / build output
 node_modules/
-bedagent-audit/dist/
+dist/
 
 # Reference snapshots may be committed for GitHub browsing.
 # Never commit nested VCS metadata or generated artifacts inside references.
