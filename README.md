@@ -125,6 +125,7 @@ site/                               # 静态 GitHub Pages 站点
 
 | 文档 | 说明 |
 |------|------|
+| [docs/README.md](docs/README.md) | 文档中心：推荐阅读顺序、主线/候选/参考说明 |
 | [docs/what-is-bedagent.md](docs/what-is-bedagent.md) | bedagent 是什么：控制层、协议、角色系统还是 Agent 集群 |
 | [docs/sofagent-context.md](docs/sofagent-context.md) | sofagent 作为同源隐喻、灵感来源和上下文来源 |
 | [docs/design-versioning.md](docs/design-versioning.md) | 设计版本体系：想法快速切换时如何记录主线 |
@@ -140,6 +141,7 @@ site/                               # 静态 GitHub Pages 站点
 | [docs/sandbox-brain.md](docs/sandbox-brain.md) | Agent 大脑、推演沙盒、执行沙盒 |
 | [docs/voice-control.md](docs/voice-control.md) | 床上低屏幕/语音控制规划 |
 | [docs/agent-constraint-frameworks.md](docs/agent-constraint-frameworks.md) | Agent 约束/治理框架调研 |
+| [ideas/README.md](ideas/README.md) | 候选路线索引 |
 | [ref/README.md](ref/README.md) | 参考快照目录说明 |
 | [site/](site/) | bedagent 理念展示网站源码 |
 
