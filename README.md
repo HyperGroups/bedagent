@@ -8,6 +8,8 @@ bedagent 是给“没有手脚的思想者”准备的 Agent 外骨骼。
 
 这个人可能正躺在床上：不想打字，不想看长屏幕，不想维护复杂流程，但脑子一直在想。bedagent 要接住这些想法，陪他推演，把想法整理成任务，再让 Agent 在安全边界内执行。
 
+bedagent 的大脑里需要一个“最智者”：它不急着执行，而是先保护主线、剪掉低价值分支、问关键问题、做取舍。
+
 ## 第一原则
 
 **懒到极致的人是一等公民。**
@@ -45,6 +47,8 @@ bedagent = sofagent 的纪律层 + 思想捕获 + Agent 大脑 + 执行沙盒 + 
 ```text
 床上想法
 → Capture 捕获
+→ Sage 最智者
+→ Focus 剪枝
 → Think 推演沙盒
 → Plan 任务整理
 → Gate 风险闸门
@@ -79,6 +83,7 @@ ref/ref_repos/bedagent-bootstrap/    # 早期 bedagent 历史实现快照
 | 文档 | 说明 |
 |------|------|
 | [docs/philosophy.md](docs/philosophy.md) | sofagent 与 bedagent 的哲学对比 |
+| [docs/lazy-philosophy-and-sage.md](docs/lazy-philosophy-and-sage.md) | 懒人哲学与“最智者”角色 |
 | [docs/laziness-and-pruning.md](docs/laziness-and-pruning.md) | 懒的分型、快速思考与剪枝原则 |
 | [docs/research-map.md](docs/research-map.md) | 相关工作研究地图：语音、PKM、Agent、Guardrails、沙盒 |
 | [docs/capability-map.md](docs/capability-map.md) | bedagent 应该有哪些功能 |

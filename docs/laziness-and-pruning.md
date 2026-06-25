@@ -4,6 +4,8 @@
 
 所以懒需要分型。
 
+剪枝这件事由“最智者”承担：懒人哲学定义什么不值得浪费，最智者负责判断哪些分支应该展开、暂存、合并或剪掉。详见 [lazy-philosophy-and-sage.md](lazy-philosophy-and-sage.md)。
+
 ## 四种懒
 
 | 类型 | 含义 | bedagent 态度 |

@@ -11,10 +11,13 @@ bedagent 要解决两个问题：
 
 推演沙盒是 Agent 的大脑。
 
+大脑里最高的角色是 **最智者（Sage）**。它不负责执行，只负责在动手前做主线定位、剪枝、追问、取舍和风险判断。
+
 它不改代码，不跑命令，不触碰真实世界，只做思考：
 
 ```text
 用户想法
+→ 最智者判断
 → 多种理解
 → 主线定位
 → 分支剪枝
@@ -71,6 +74,20 @@ focus:
   pruned:
     - "命名细节争论"
 ```
+
+同时应该包含 `sage` 字段：
+
+```yaml
+sage:
+  restatement: "用户真正想解决的问题"
+  main_thread: "当前主线"
+  recommendation: "下一步建议"
+  risk: "green | yellow | red"
+  questions:
+    - "最多三个关键问题"
+```
+
+没有 `sage.recommendation`，不进入执行沙盒。
 
 ## 乱改：执行沙盒
 
