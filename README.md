@@ -119,7 +119,13 @@ ideas/                              # 候选路线，不是 active root
 site/                               # 静态 GitHub Pages 站点
 ```
 
-合并到 `main` 后，GitHub Actions 会把 `site/` 发布到 `gh-pages` 分支。
+目标地址：
+
+```text
+https://hypergroups.github.io/bedagent/
+```
+
+合并到 `main` 后，GitHub Actions 会把 `site/` 发布到 GitHub Pages。如果页面 404，优先检查仓库 Settings → Pages 是否启用了 GitHub Actions 作为发布源。
 
 ## 文档
 
