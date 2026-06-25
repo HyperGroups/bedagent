@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="bedagent: 给床上思想者的 Agent 控制系统。懒人哲学、最智者、推演沙盒、执行沙盒与短反馈。"
+    />
+    <title>bedagent — 我躺着想，Agent 起来干</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <nav class="nav" aria-label="Main navigation">
+        <a class="brand" href="#top" aria-label="bedagent home">
+          <span class="brand-mark">bed</span><span>agent</span>
+        </a>
+        <div class="nav-links">
+          <a href="#what">是什么</a>
+          <a href="#loop">链路</a>
+          <a href="#gallery">概念图</a>
+          <a href="#map">研究地图</a>
+          <a href="#docs">文档</a>
+        </div>
+      </nav>
+
+      <section id="top" class="hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Design Version D0.1 · Book of Sloth / Sage</p>
+          <h1>我躺着想，<br />Agent 起来干。</h1>
+          <p class="lead">
+            bedagent 是给“没有手脚的思想者”准备的 Agent 控制系统：
+            控制层 + 协议 + 角色系统，把床上的碎片想法变成安全行动。
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#what">理解 bedagent</a>
+            <a class="button secondary" href="https://github.com/HyperGroups/bedagent">GitHub</a>
+          </div>
+        </div>
+        <div class="hero-art">
+          <img src="./assets/hero.svg" alt="床上思想者与 Agent 外骨骼概念图" />
+        </div>
+      </section>
+    </header>
+
+    <main>
+      <section id="what" class="section">
+        <div class="section-heading">
+          <p class="eyebrow">What is bedagent?</p>
+          <h2>不是单个 Agent，而是思想者的控制系统。</h2>
+        </div>
+        <div class="cards three">
+          <article class="card">
+            <h3>文档协议形态</h3>
+            <p>Book of Sloth、Sage 协议、action manifest、Blanket 风险闸门与 Pillow Note 短报。</p>
+          </article>
+          <article class="card">
+            <h3>本地控制层形态</h3>
+            <p>监听文本/语音输入，生成 Sage 判断，调度 worktree 或 sandbox，再输出短汇报。</p>
+          </article>
+          <article class="card">
+            <h3>Agent 集群形态</h3>
+            <p>Sage、Scribe、Blanket、Hands、Audit、Voice Adapter 和 Sandbox Adapter 协作。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section contrast">
+        <div class="split">
+          <div>
+            <p class="eyebrow">First Principle</p>
+            <h2>懒到极致的人是一等公民。</h2>
+            <p>
+              懒不是判断豁免，而是交互原则：少动手、少废话、少分叉。
+              让人少做机器能做的事，但不替人逃避价值判断。
+            </p>
+          </div>
+          <div class="quote-card">
+            <p>想的时候快，<br />剪枝要狠，<br />动手前慢，<br />执行要稳。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="loop" class="section">
+        <div class="section-heading">
+          <p class="eyebrow">Core Loop</p>
+          <h2>从床上想法到安全行动。</h2>
+        </div>
+        <div class="flow">
+          <span>Nest</span>
+          <span>Sage</span>
+          <span>Prune</span>
+          <span>Dream</span>
+          <span>Fold</span>
+          <span>Blanket</span>
+          <span>Hands</span>
+          <span>Pillow Note</span>
+          <span>Bedside Journal</span>
+        </div>
+      </section>
+
+      <section id="gallery" class="section">
+        <div class="section-heading">
+          <p class="eyebrow">Concept Design</p>
+          <h2>四张概念图，四个核心隐喻。</h2>
+        </div>
+        <div class="gallery">
+          <figure>
+            <img src="./assets/concept-hero.svg" alt="bedagent 总体概念图" />
+            <figcaption>床上思想者：低屏幕、低操作、高质量思考。</figcaption>
+          </figure>
+          <figure>
+            <img src="./assets/concept-sage.svg" alt="最智者剪枝概念图" />
+            <figcaption>Sage：最智者负责主线定位、剪枝与取舍。</figcaption>
+          </figure>
+          <figure>
+            <img src="./assets/concept-brain-hands.svg" alt="Brain before Hands 概念图" />
+            <figcaption>Brain before Hands：先推演，再进入执行沙盒。</figcaption>
+          </figure>
+          <figure>
+            <img src="./assets/concept-book.svg" alt="Book of Sloth 概念图" />
+            <figcaption>Book of Sloth：懒人哲学，不浪费手、眼睛和注意力。</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="map" class="section contrast">
+        <div class="section-heading">
+          <p class="eyebrow">Research Map</p>
+          <h2>bedagent 站在多个成熟方向的交叉点上。</h2>
+        </div>
+        <div class="map-grid">
+          <div>语音 Agent<br /><small>Pipecat / TEN / Kiwi</small></div>
+          <div>无手操作<br /><small>Talon / Serenade</small></div>
+          <div>第二大脑<br /><small>Notion / Obsidian / Mem</small></div>
+          <div>Agent Brain<br /><small>ReAct / Reflexion / ToT</small></div>
+          <div>Guardrails<br /><small>NeMo / Guardrails AI / LLM Guard</small></div>
+          <div>执行沙盒<br /><small>Sandbox Agent / E2B / worktree</small></div>
+          <div>观测审计<br /><small>Langfuse / trace / diff audit</small></div>
+          <div>规则文件<br /><small>AGENTS.md / CLAUDE.md / SKILL.md</small></div>
+        </div>
+      </section>
+
+      <section id="docs" class="section">
+        <div class="section-heading">
+          <p class="eyebrow">Docs</p>
+          <h2>当前是设计探索期。</h2>
+        </div>
+        <div class="doc-list">
+          <a href="https://github.com/HyperGroups/bedagent/blob/main/docs/what-is-bedagent.md">bedagent 是什么</a>
+          <a href="https://github.com/HyperGroups/bedagent/blob/main/docs/design-versioning.md">设计版本体系</a>
+          <a href="https://github.com/HyperGroups/bedagent/blob/main/docs/lazy-philosophy-and-sage.md">懒人哲学与最智者</a>
+          <a href="https://github.com/HyperGroups/bedagent/blob/main/docs/naming-system.md">命名系统</a>
+          <a href="https://github.com/HyperGroups/bedagent/blob/main/docs/research-map.md">研究地图</a>
+          <a href="https://github.com/HyperGroups/bedagent/blob/main/docs/sandbox-brain.md">Agent 大脑与沙盒</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>bedagent · Book of Sloth / Sage · D0.1</p>
+      <p>懒有书，事有智者，动手有沙盒。</p>
+    </footer>
+  </body>
+</html>

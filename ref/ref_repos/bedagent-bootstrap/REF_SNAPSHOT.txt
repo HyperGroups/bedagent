@@ -1,0 +1,4 @@
+bedagent bootstrap snapshot
+source branch: cursor/bedagent-foundation-6e9e
+source commit: a79a5135cbd455c17aa39ecc1bed426c0e09f20f
+created: 2026-06-25T16:17:35Z

@@ -1,0 +1,4 @@
+sofagent reference snapshot
+source remote: git@github.com:HyperGroups/sofagent.git
+source commit: a02cfdb165b6831209135548825cced57a1113f0
+created: 2026-06-25T16:21:35Z

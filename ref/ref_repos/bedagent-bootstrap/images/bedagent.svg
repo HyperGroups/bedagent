@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420" role="img" aria-labelledby="title desc">
+  <title id="title">bedagent</title>
+  <desc id="desc">A minimal bed-themed logo for bedagent.</desc>
+  <rect width="640" height="420" rx="36" fill="#0f172a"/>
+  <rect x="96" y="186" width="448" height="120" rx="24" fill="#2563eb"/>
+  <rect x="116" y="146" width="156" height="72" rx="20" fill="#bfdbfe"/>
+  <rect x="286" y="146" width="238" height="72" rx="20" fill="#93c5fd"/>
+  <rect x="86" y="286" width="468" height="42" rx="18" fill="#1d4ed8"/>
+  <rect x="120" y="328" width="44" height="38" rx="10" fill="#334155"/>
+  <rect x="476" y="328" width="44" height="38" rx="10" fill="#334155"/>
+  <circle cx="480" cy="116" r="32" fill="#f8fafc"/>
+  <path d="M473 100h14v24h-14zM462 111h36v12h-36z" fill="#2563eb"/>
+  <text x="320" y="96" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="700" fill="#f8fafc">bedagent</text>
+  <text x="320" y="382" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="24" fill="#bfdbfe">direct agents from bed</text>
+</svg>

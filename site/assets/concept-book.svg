@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-label="Book of Sloth">
+  <rect width="900" height="520" fill="#1e1b4b"/>
+  <circle cx="720" cy="110" r="76" fill="#fde68a" opacity=".4"/>
+  <rect x="210" y="132" width="480" height="290" rx="28" fill="#78350f" stroke="#facc15" stroke-width="5"/>
+  <rect x="245" y="165" width="410" height="224" rx="20" fill="#92400e" stroke="#fed7aa" stroke-width="3"/>
+  <text x="450" y="220" text-anchor="middle" font-family="Georgia,serif" font-size="44" font-weight="700" fill="#fef3c7">Book of Sloth</text>
+  <path d="M395 300c20-48 92-46 112 0 16 38-20 70-56 70s-72-32-56-70z" fill="#facc15" opacity=".9"/>
+  <circle cx="430" cy="292" r="9" fill="#431407"/>
+  <circle cx="472" cy="292" r="9" fill="#431407"/>
+  <path d="M432 326c18 14 38 14 52 0" stroke="#431407" stroke-width="6" stroke-linecap="round" fill="none"/>
+  <path d="M330 460h240" stroke="#facc15" stroke-width="10" stroke-linecap="round"/>
+  <rect x="610" y="380" width="145" height="70" rx="14" fill="#fef3c7"/>
+  <text x="682" y="423" text-anchor="middle" font-family="Inter,Arial" font-size="18" font-weight="800" fill="#78350f">Pillow Note</text>
+</svg>
