@@ -148,6 +148,8 @@ Capture → Sage → Focus → Think → Plan → Gate → Act → Report
 
 其中 Sage 是最智者，不是另一个执行步骤，而是整个 Brain 的最高判断层。
 
+早期 Sage 可以只是一个 Markdown 输出协议；后续才可能实现成独立 Agent。不要把 Sage 和执行 Agent 混在一起。
+
 ## 最小实现
 
 MVP 里，最智者可以先是一个纯 Markdown 协议：
