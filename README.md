@@ -10,6 +10,8 @@ bedagent 是给“没有手脚的思想者”准备的 Agent 外骨骼。
 
 bedagent 的大脑里需要一个“最智者”：它不急着执行，而是先保护主线、剪掉低价值分支、问关键问题、做取舍。
 
+命名上，bedagent 采用床与懒的体系：**Book of Sloth** 是懒人哲学，**Sage** 是最智者，**Dream** 是推演沙盒，**Blanket** 是风险保护，**Hands** 是执行沙盒，**Pillow Note** 是短汇报。
+
 ## 第一原则
 
 **懒到极致的人是一等公民。**
@@ -84,6 +86,7 @@ ref/ref_repos/bedagent-bootstrap/    # 早期 bedagent 历史实现快照
 |------|------|
 | [docs/philosophy.md](docs/philosophy.md) | sofagent 与 bedagent 的哲学对比 |
 | [docs/lazy-philosophy-and-sage.md](docs/lazy-philosophy-and-sage.md) | 懒人哲学与“最智者”角色 |
+| [docs/naming-system.md](docs/naming-system.md) | 床、懒、最智者主题的命名系统 |
 | [docs/laziness-and-pruning.md](docs/laziness-and-pruning.md) | 懒的分型、快速思考与剪枝原则 |
 | [docs/research-map.md](docs/research-map.md) | 相关工作研究地图：语音、PKM、Agent、Guardrails、沙盒 |
 | [docs/capability-map.md](docs/capability-map.md) | bedagent 应该有哪些功能 |

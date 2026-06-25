@@ -12,6 +12,13 @@ bedagent 需要两根柱子：
 最智者：看主线，问关键，做取舍
 ```
 
+正式命名：
+
+- 懒人哲学之书：**Book of Sloth**
+- 最智者：**Sage**
+
+命名系统见 [naming-system.md](naming-system.md)。
+
 ## 懒人哲学
 
 懒不是道德缺陷，而是产品约束。
