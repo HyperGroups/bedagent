@@ -167,6 +167,8 @@ bedagent/
 
 ## 版本代号
 
+版本代号不是产品版本号。产品版本使用 `v0.x/v1.x`，设计快照使用 `D0.x/D1.x`，代号只负责叙事和阶段记忆。详见 [design-versioning.md](design-versioning.md)。
+
 | 代号 | 用途 |
 |------|------|
 | Nap | 小修、小实验 |

@@ -4,6 +4,12 @@
 
 > 我躺着想，Agent 起来干。
 
+```text
+Design Version: D0.1
+Codename: Book of Sloth / Sage
+Status: design exploration
+```
+
 bedagent 是给“没有手脚的思想者”准备的 **Agent 控制系统**。
 
 它不是单个 Agent，也不是通用 Agent 框架。它是一套把想法变成安全行动的 **控制层 + 协议 + 角色系统**。
@@ -101,6 +107,8 @@ ref/ref_repos/bedagent-bootstrap/    # 早期 bedagent 历史实现快照
 | 文档 | 说明 |
 |------|------|
 | [docs/what-is-bedagent.md](docs/what-is-bedagent.md) | bedagent 是什么：控制层、协议、角色系统还是 Agent 集群 |
+| [docs/design-versioning.md](docs/design-versioning.md) | 设计版本体系：想法快速切换时如何记录主线 |
+| [docs/design-log.md](docs/design-log.md) | 设计决策记录：关键 pivot 和取舍 |
 | [docs/philosophy.md](docs/philosophy.md) | sofagent 与 bedagent 的哲学对比 |
 | [docs/lazy-philosophy-and-sage.md](docs/lazy-philosophy-and-sage.md) | 懒人哲学与“最智者”角色 |
 | [docs/naming-system.md](docs/naming-system.md) | 床、懒、最智者主题的命名系统 |
