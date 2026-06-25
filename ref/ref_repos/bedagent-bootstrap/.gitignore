@@ -23,9 +23,7 @@ Thumbs.db
 node_modules/
 bedagent-audit/dist/
 
-# Reference snapshots may be committed for GitHub browsing.
-# Never commit nested VCS metadata or generated artifacts inside references.
-/ref/ref_repos/*/.git/
-/ref/ref_repos/*/.bedagent/
-/ref/ref_repos/*/node_modules/
-/ref/ref_repos/*/bedagent-audit/dist/
+# Local reference repositories/worktrees.
+# Keep only the directory contract; never commit referenced source trees.
+/ref/ref_repos/*
+!/ref/ref_repos/.gitkeep
