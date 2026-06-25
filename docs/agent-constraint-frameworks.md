@@ -1,5 +1,7 @@
 # Agent 约束/治理框架调研
 
+> 更完整的相关工作全景见 [research-map.md](research-map.md)。本文只聚焦 Gate / 约束 / 审计这一块。
+
 ## 结论
 
 目前没有一个开源框架同时覆盖：
