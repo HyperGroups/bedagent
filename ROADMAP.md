@@ -328,6 +328,8 @@
 >
 > **v0.85 砍削原则**：验证优先于功能，合规刚需保留，治理验证推前，其余全部待评估。先证明纪律层增量是真的，再做其他任何事。
 
+> 🛏️ **床上模式规划**：懒到极致的人是一等公民。低屏幕语音控制是 bedagent 的产品方向，但不抢 v0.9x 的验证主线。先定义语音命令契约、风险确认和 action manifest，再评估 Pipecat / TEN / Kiwi Voice 等语音框架。详见 [docs/voice-control.md](./docs/voice-control.md) 与 [docs/agent-constraint-frameworks.md](./docs/agent-constraint-frameworks.md)。
+
 ### v0.9x — 验证 + 合规刚需
 
 **要解决什么**：先证明已有功能确实能产生用户可感知的价值，再谈规模化。
@@ -420,6 +422,8 @@
 | **Windows 支持（待需求验证）** | 🔧 | 若 v0.81 五平台验证显示 Windows 用户有实质需求，走 PowerShell 平行实现路线——bash 版本不动，新增 `.ps1` 文件。不换语言，不引入编译工具链。install.sh 检测到 Windows 时调 PowerShell 版本，用「任务计划程序」注册后台服务 |
 | **成本仪表盘** | 🔧 | bash 读 task/logs 输出 token/循环次数/失败率。Anthropic 实测数据：多智能体 vs 单 AI 成本差 15 倍，多智能体内部架构差异再差 10 倍——最贵 vs 最便宜差 100 倍。无展示层时，优化方向无从判断 | v0.9x→v1.x |
 | **loop-check 反驳层** | 🔧 | 闭环模式从「检查对错」→「假设你错了，你来自证」。设计参考 Bun 迁移案例（75 万行 Zig→Rust，测试通过率 99.8%）：核心是 file-level 即时 review + 反驳层——评审者假设产出是错的，要求执行者举证。OpenClaw 用独立子 Agent，其他用 prompt 级 | v0.9x→v1.x |
+| **床上低屏幕语音控制** | 🔧 | 懒到极致的人是一等公民。先做语音命令契约和风险确认：短摘要、暂停/继续、红色操作二次确认。实现层优先复用 Kiwi Voice（OpenClaw）或 Pipecat/TEN（跨平台），不自研 STT/TTS。详见 [docs/voice-control.md](./docs/voice-control.md) | 新增规划 |
+| **Agent 约束框架兼容层** | 🔧 | 借鉴 NeMo Guardrails / Guardrails AI / LLM Guard / LangGraph：定义 action manifest、approval 状态机、AGENTS.md/CLAUDE.md/Cursor Rules 导出器。bedagent 做外层纪律和审计，不变成 Python Agent 框架 | 新增规划 |
 
 ---
 

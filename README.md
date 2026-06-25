@@ -20,6 +20,8 @@
 
 bedagent 参考 [sofagent](https://github.com/HyperGroups/sofagent) 的主体思想：给 Agent 加一层跨平台纪律约束，让它先读上下文、再动手、做完验证、失败复盘。区别是产品语义从“躺在沙发上等 Agent 干活”，进一步收敛成“躺在床上指挥智能体把活干了”。
 
+**懒到极致的人是一等公民。** bedagent 默认用户不想盯屏幕、不想反复打字、不想读长日志、不想维护复杂工作流。产品设计要先服务这种人：一句话派活、短反馈确认、能语音就语音、能自动推进就自动推进；只有遇到高风险动作时，才把用户拉回来确认。
+
 这个仓库是 bed 主题的派生实现：核心仍是 **4 底线 + 10 铁律 + 三层加载链 + 反思循环 + 可选编排/审计**。上游历史文档和实验记录保留为设计证据，bedagent 自己的社区数据还需要后续补充。
 
 如果你也想少坐在电脑前盯循环，多把任务交给 Agent，可以把 bedagent 当成一套“床头遥控器”：先规定 Agent 怎么干，再让它自己推进，最后用日志和审计看它有没有守规矩。
@@ -61,7 +63,7 @@ bedagent 参考 [sofagent](https://github.com/HyperGroups/sofagent) 的主体思
 
 ---
 
-## 📖 三份文档
+## 📖 文档入口
 
 | 你是谁 | 看哪个 | 一句话 |
 |------|------|------|
@@ -69,6 +71,8 @@ bedagent 参考 [sofagent](https://github.com/HyperGroups/sofagent) 的主体思
 | 开发者 | [DEVELOPMENT.md](./DEVELOPMENT.md)（693 行） | Skill 怎么协同、编排怎么跑、反思怎么闭环 |
 | 设计爱好者 | [ARCHITECTURE.md](./ARCHITECTURE.md)（385 行） | 为什么选这些设计、已知局限 |
 | 企业技术决策者 | [docs/team-deploy.md](./docs/team-deploy.md)（3 页） | 装、试、回顾三阶段落地指南 |
+| 低屏幕/语音场景 | [docs/voice-control.md](./docs/voice-control.md) | 躺在床上用语音指挥 Agent 的能力规划 |
+| 框架调研 | [docs/agent-constraint-frameworks.md](./docs/agent-constraint-frameworks.md) | 可借鉴的 Agent 约束、Guardrails、HITL、语音框架 |
 
 ---
 
