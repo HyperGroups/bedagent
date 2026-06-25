@@ -18,3 +18,7 @@ Thumbs.db
 
 # agency-orchestrator local config
 .env
+
+# JavaScript dependencies / build output
+node_modules/
+bedagent-audit/dist/

@@ -12,12 +12,18 @@
     "test": "vitest run",
     "check": "tsc --noEmit"
   },
-  "keywords": ["bedagent", "audit", "git", "agent", "discipline"],
+  "keywords": [
+    "bedagent",
+    "audit",
+    "git",
+    "agent",
+    "discipline"
+  ],
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
   },
   "engines": {
     "node": ">=18"
