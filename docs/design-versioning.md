@@ -152,6 +152,8 @@ last_decision: ADR-0003
 
 Git 分支记录代码演化，Design Version 记录思想演化。
 
+目录、分支、ref 快照的具体使用规则见 [workspace-strategy.md](workspace-strategy.md)。
+
 推荐：
 
 ```text

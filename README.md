@@ -102,6 +102,12 @@ ref/ref_repos/bedagent-bootstrap/    # 早期 bedagent 历史实现快照
 
 它们提交在仓库里，方便 GitHub 浏览和 `rg` 搜索，但不再是 active root 的源代码。
 
+并行候选想法放在：
+
+```text
+ideas/                              # 候选路线，不是 active root
+```
+
 ## 文档
 
 | 文档 | 说明 |
@@ -109,6 +115,7 @@ ref/ref_repos/bedagent-bootstrap/    # 早期 bedagent 历史实现快照
 | [docs/what-is-bedagent.md](docs/what-is-bedagent.md) | bedagent 是什么：控制层、协议、角色系统还是 Agent 集群 |
 | [docs/design-versioning.md](docs/design-versioning.md) | 设计版本体系：想法快速切换时如何记录主线 |
 | [docs/design-log.md](docs/design-log.md) | 设计决策记录：关键 pivot 和取舍 |
+| [docs/workspace-strategy.md](docs/workspace-strategy.md) | 目录、分支、ref 快照如何配合管理想法切换 |
 | [docs/philosophy.md](docs/philosophy.md) | sofagent 与 bedagent 的哲学对比 |
 | [docs/lazy-philosophy-and-sage.md](docs/lazy-philosophy-and-sage.md) | 懒人哲学与“最智者”角色 |
 | [docs/naming-system.md](docs/naming-system.md) | 床、懒、最智者主题的命名系统 |

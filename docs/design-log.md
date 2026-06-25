@@ -193,3 +193,42 @@ Product Version 只在出现真实可运行实现后启用。
 bedagent 还处于想法快速切换期。用传统产品版本号会制造误导。
 
 设计版本记录思想演化，产品版本记录软件发布。
+
+## ADR-0007：引入 ideas 目录与分支策略
+
+```yaml
+date: 2026-06-25
+design_version: D0.1
+status: accepted
+```
+
+### 决策
+
+引入三种空间：
+
+```text
+active root: 当前主线
+ideas/: 候选路线和并行设计
+ref/ref_repos/: 历史和外部参考快照
+```
+
+同时保留 Git 分支用于真正互相冲突的大改。
+
+### 原因
+
+当前阶段会频繁切换想法。如果所有想法都直接改 active root，文档会互相打架；如果所有想法都开分支，又不方便 `rg` 并排搜索。
+
+因此：
+
+- 目录负责并排想；
+- 分支负责隔离改；
+- ADR 负责记住为什么。
+
+### 初始候选路线
+
+```text
+ideas/sage-first/
+ideas/voice-first/
+ideas/sandbox-first/
+ideas/mobile-bedside/
+```
