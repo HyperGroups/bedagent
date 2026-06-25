@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-label="Sage pruning thought branches">
+  <rect width="900" height="520" fill="#111827"/>
+  <circle cx="450" cy="225" r="72" fill="#f8fafc"/>
+  <circle cx="425" cy="210" r="8" fill="#111827"/>
+  <circle cx="475" cy="210" r="8" fill="#111827"/>
+  <path d="M420 245c24 18 48 18 64 0" stroke="#111827" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <text x="450" y="335" text-anchor="middle" font-family="Inter,Arial" font-size="36" font-weight="900" fill="#f8fafc">Sage</text>
+  <g stroke-width="8" stroke-linecap="round" fill="none">
+    <path d="M450 225C315 160 230 110 145 80" stroke="#38bdf8"/>
+    <path d="M450 225C330 220 220 230 120 280" stroke="#a78bfa"/>
+    <path d="M450 225C578 150 682 130 790 82" stroke="#86efac"/>
+    <path d="M450 225C580 250 690 318 785 390" stroke="#facc15" opacity=".35"/>
+    <path d="M450 225C340 330 220 380 100 430" stroke="#f87171" opacity=".25"/>
+  </g>
+  <g fill="#0f172a" stroke="#e0f2fe" stroke-width="3">
+    <rect x="86" y="48" width="120" height="54" rx="16"/>
+    <rect x="61" y="252" width="130" height="54" rx="16"/>
+    <rect x="714" y="54" width="130" height="54" rx="16"/>
+  </g>
+  <text x="450" y="462" text-anchor="middle" font-family="Inter,Arial" font-size="28" fill="#cbd5e1">keep · park · merge · prune</text>
+</svg>

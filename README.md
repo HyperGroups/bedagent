@@ -113,6 +113,14 @@ ref/ref_repos/bedagent-bootstrap/    # 早期 bedagent 历史实现快照
 ideas/                              # 候选路线，不是 active root
 ```
 
+概念展示网站放在：
+
+```text
+site/                               # 静态 GitHub Pages 站点
+```
+
+合并到 `main` 后，GitHub Actions 会把 `site/` 发布到 `gh-pages` 分支。
+
 ## 文档
 
 | 文档 | 说明 |
@@ -133,6 +141,7 @@ ideas/                              # 候选路线，不是 active root
 | [docs/voice-control.md](docs/voice-control.md) | 床上低屏幕/语音控制规划 |
 | [docs/agent-constraint-frameworks.md](docs/agent-constraint-frameworks.md) | Agent 约束/治理框架调研 |
 | [ref/README.md](ref/README.md) | 参考快照目录说明 |
+| [site/](site/) | bedagent 理念展示网站源码 |
 
 ## 不是什么
 
