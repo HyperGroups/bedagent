@@ -49,16 +49,21 @@ bedagent 有三种形态：
 
 ## 和 sofagent 的关系
 
-sofagent 的哲学是：**让 Agent 守纪律。**
+bedagent 与 sofagent 有明确关系：二者共享“躺着让 Agent 干活”的愿景。
 
-bedagent 继承这个纪律层，但产品重心不同：
+sofagent 来自 **sofa + agent**：躺在沙发上，让 Agent 把活干了。
+
+bedagent 来自 **bed + agent**：躺在床上，把想法交给 Agent 去推演和执行。
+
+sofagent 是 bedagent 的灵感来源和上下文来源，尤其是“Agent 需要纪律”这件事。但 bedagent 的产品重心不同：
 
 | 维度 | sofagent | bedagent |
 |------|----------|----------|
+| 姿态 | 沙发 | 床 |
 | 第一性问题 | Agent 不守规矩怎么办 | 人在床上一直想，但懒得操作怎么办 |
-| 核心对象 | Agent 行为 | 思想者的想法到现实 |
-| 主要能力 | 纪律、验证、反思、审计 | 捕获、推演、语音、沙盒、短反馈 |
-| 隐喻 | 纪律委员 | 思想者外骨骼 |
+| 中心 | Agent 行为 | 思想者的想法到安全行动 |
+| 重点 | 纪律层 | 控制层 + 推演层 + 低屏幕交互 |
+| 隐喻 | 沙发上的纪律委员 | 床上的思想者外骨骼 |
 
 一句话：
 
@@ -113,6 +118,7 @@ ideas/                              # 候选路线，不是 active root
 | 文档 | 说明 |
 |------|------|
 | [docs/what-is-bedagent.md](docs/what-is-bedagent.md) | bedagent 是什么：控制层、协议、角色系统还是 Agent 集群 |
+| [docs/sofagent-context.md](docs/sofagent-context.md) | sofagent 作为同源隐喻、灵感来源和上下文来源 |
 | [docs/design-versioning.md](docs/design-versioning.md) | 设计版本体系：想法快速切换时如何记录主线 |
 | [docs/design-log.md](docs/design-log.md) | 设计决策记录：关键 pivot 和取舍 |
 | [docs/workspace-strategy.md](docs/workspace-strategy.md) | 目录、分支、ref 快照如何配合管理想法切换 |

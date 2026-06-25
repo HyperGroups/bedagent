@@ -10,6 +10,17 @@ bedagent 的目标用户不是“更高效的工程师”，而是：
 
 所以 bedagent 的任务不是简单“帮他偷懒”，而是把低操作状态下的思考变成现实结果。
 
+## sofagent 上下文
+
+bedagent 与 sofagent 属于同一个“躺着让 Agent 干活”的语义家族。
+
+- sofagent：sofa + agent，躺在沙发上，让 Agent 把活干了；
+- bedagent：bed + agent，躺在床上，把想法交给 Agent 去推演和执行。
+
+sofagent 是 bedagent 的灵感来源和上下文来源，尤其是“Agent 需要纪律”这条主线。
+
+详见 [sofagent-context.md](sofagent-context.md)。
+
 ## sofagent vs bedagent
 
 | 维度 | sofagent | bedagent |

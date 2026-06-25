@@ -232,3 +232,42 @@ ideas/voice-first/
 ideas/sandbox-first/
 ideas/mobile-bedside/
 ```
+
+## ADR-0008：定义 sofagent 为上下文与灵感来源
+
+```yaml
+date: 2026-06-25
+design_version: D0.1
+status: accepted
+```
+
+### 决策
+
+bedagent 与 sofagent 的关系定义为：
+
+```text
+同源隐喻 + 灵感来源 + 上下文来源
+```
+
+而不是：
+
+```text
+简单 fork / 改名 / 替代品
+```
+
+### 原因
+
+sofagent 的 “sofa + agent” 已经表达了“躺着让 Agent 干活”的方向。bedagent 沿着这个语义继续推进，但把重心从“Agent 纪律层”扩展到“床上思想者的 Agent 控制系统”。
+
+### 保留
+
+- sofagent 的纪律层启发；
+- 先读后写、验证再干、谨慎修改；
+- 反思和审计意识；
+- `ref/ref_repos/sofagent/` 作为可浏览上下文。
+
+### 改写
+
+- 从沙发姿态到床上姿态；
+- 从 Agent 行为中心到思想者想法中心；
+- 从纪律层到控制层 + 推演层 + 低屏幕交互。
