@@ -87,6 +87,7 @@ ref/ref_repos/bedagent-bootstrap/    # 早期 bedagent 历史实现快照
 | [docs/philosophy.md](docs/philosophy.md) | sofagent 与 bedagent 的哲学对比 |
 | [docs/lazy-philosophy-and-sage.md](docs/lazy-philosophy-and-sage.md) | 懒人哲学与“最智者”角色 |
 | [docs/naming-system.md](docs/naming-system.md) | 床、懒、最智者主题的命名系统 |
+| [docs/vocabulary.md](docs/vocabulary.md) | 床/懒/智/沙盒/语音等语义词汇素材库 |
 | [docs/laziness-and-pruning.md](docs/laziness-and-pruning.md) | 懒的分型、快速思考与剪枝原则 |
 | [docs/research-map.md](docs/research-map.md) | 相关工作研究地图：语音、PKM、Agent、Guardrails、沙盒 |
 | [docs/capability-map.md](docs/capability-map.md) | bedagent 应该有哪些功能 |
