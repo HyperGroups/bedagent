@@ -11,6 +11,7 @@ import argparse
 import json
 import re
 import textwrap
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,7 +62,9 @@ def now_iso() -> str:
 
 
 def build_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    suffix = uuid.uuid4().hex[:6]
+    return f"{ts}-{suffix}"
 
 
 def clean_text(value: str) -> str:

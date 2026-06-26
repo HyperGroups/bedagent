@@ -3,10 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bedagent_mvp import run_closed_loop
+from bedagent_mvp import build_run_id, run_closed_loop
 
 
 class BedagentMvpTests(unittest.TestCase):
+    def test_build_run_id_is_unique(self) -> None:
+        first = build_run_id()
+        second = build_run_id()
+        self.assertNotEqual(first, second)
+
     def test_non_interactive_denies_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "runs"
