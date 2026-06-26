@@ -396,3 +396,34 @@ v0.4 目标是让控制层具备：
 - cleanup 仍需显式 `--allow-side-effects`；
 - 不做自动 TTL 清理或批量策略调度；
 - 摘要仍是启发式，不引入模型依赖。
+
+## ADR-0013：引入 retention 策略清理、memory semantic search、live policy explain
+
+```yaml
+date: 2026-06-26
+design_version: D0.1
+status: accepted
+product_milestone: v0.5.0-mvp
+```
+
+### 决策
+
+在 v0.4.0-mvp 上继续推进三项：
+
+1. `worktree cleanup --apply-retention`，按 `ttl_hours + max_keep` 选取清理候选；
+2. `memory-search` 子命令，基于 TF-IDF + cosine 做近似语义检索；
+3. `worktree-live` 增加 policy explain（risk/keyword/side-effect 三段检查树）。
+
+### 原因
+
+“全面推进”到这个阶段，需要把“可执行”升级为“可治理 + 可回忆 + 可解释”：
+
+- 可治理：worktree 不应无限积累；
+- 可回忆：journal 不应只追加不检索；
+- 可解释：执行被拦截时必须告诉人为什么。
+
+### 边界
+
+- retention 仍通过显式命令触发，不做后台自动任务；
+- semantic search 仍是轻量 lexical 方案，不依赖外部模型；
+- policy explain 先覆盖 live adapter，不代表全链路解释器已完成。

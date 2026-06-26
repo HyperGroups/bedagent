@@ -1,9 +1,18 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
-from bedagent_mvp import build_recap, build_run_id, list_managed_worktrees, run_closed_loop
+from bedagent_mvp import (
+    build_recap,
+    build_run_id,
+    evaluate_live_policy,
+    list_managed_worktrees,
+    run_closed_loop,
+    select_worktree_cleanup_candidates,
+    semantic_memory_search,
+)
 
 
 class BedagentMvpTests(unittest.TestCase):
@@ -166,6 +175,53 @@ class BedagentMvpTests(unittest.TestCase):
             items = list_managed_worktrees(root)
             self.assertEqual(len(items), 2)
             self.assertEqual(items[0]["run_id"], "run-a")
+
+    def test_live_policy_explain_reports_keyword_block(self) -> None:
+        policy = {
+            "allow_live_adapter_by_risk": {"green": True, "yellow": True, "red": False},
+            "live_adapter_block_keywords": ["docs"],
+        }
+        explain = evaluate_live_policy(
+            risk_level="green",
+            idea="Update docs and links",
+            policy=policy,
+            allow_side_effects=True,
+        )
+        self.assertFalse(explain["allowed"])
+        self.assertIn("docs", explain["blocked_keywords"])
+
+    def test_semantic_memory_search_finds_relevant_entry(self) -> None:
+        entries = [
+            {"run_id": "1", "idea": "prepare billing rollout", "pillow_note": "note a"},
+            {"run_id": "2", "idea": "write docs navigation", "pillow_note": "note b"},
+        ]
+        hits = semantic_memory_search(entries=entries, query="billing plan", top_k=1)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["entry"]["run_id"], "1")
+
+    def test_select_worktree_cleanup_candidates_by_ttl_and_max_keep(self) -> None:
+        now = datetime(2026, 6, 26, 14, 0, 0, tzinfo=timezone.utc)
+        items = [
+            {
+                "run_id": "20260626T135000.000000Z-aaaaaa",
+                "path": "/tmp/w1",
+                "mtime_epoch": now.timestamp() - 60,
+            },
+            {
+                "run_id": "20260625T120000.000000Z-bbbbbb",
+                "path": "/tmp/w2",
+                "mtime_epoch": now.timestamp() - 3600,
+            },
+            {
+                "run_id": "20260624T120000.000000Z-cccccc",
+                "path": "/tmp/w3",
+                "mtime_epoch": now.timestamp() - 7200,
+            },
+        ]
+        candidates = select_worktree_cleanup_candidates(items=items, now=now, ttl_hours=24, max_keep=1)
+        paths = {item["path"] for item in candidates}
+        self.assertIn("/tmp/w2", paths)
+        self.assertIn("/tmp/w3", paths)
 
 
 if __name__ == "__main__":

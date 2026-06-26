@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.4.0-mvp (prototype)
-Status: implemented (policy + adapter + memory + recap + worktree lifecycle)
+Product Milestone: v0.5.0-mvp (prototype)
+Status: implemented (policy + adapter + recap + semantic memory + retention)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -59,6 +59,10 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    Appends run summary to `.bedagent/memory/journal.ndjson` (append-only).
 11. **Worktree Lifecycle**  
    Supports managed worktree listing and cleanup through `worktree` subcommand.
+12. **Policy Explain**  
+   `worktree-live` now records a check tree (risk gate, keyword gate, side-effect gate).
+13. **Memory Retrieval**  
+   `memory-search` provides TF-IDF + cosine retrieval across recent journal entries.
 
 ## Output contract
 
@@ -72,7 +76,7 @@ The manifest includes all stage outputs and is intended to be the seed contract
 for future protocol stabilization (`sage`, `action manifest`, `blanket`,
 `pillow_note`).
 
-## New v0.3 runtime options
+## New v0.5 runtime options
 
 ```bash
 python3 mvp/bedagent_mvp.py run \
@@ -93,11 +97,22 @@ Memory recap command:
 python3 mvp/bedagent_mvp.py recap --memory-journal .bedagent/memory/journal.ndjson --limit 5
 ```
 
+Memory semantic search:
+
+```bash
+python3 mvp/bedagent_mvp.py memory-search \
+  --query "billing rollout plan" \
+  --memory-journal .bedagent/memory/journal.ndjson \
+  --limit 100 \
+  --top-k 3
+```
+
 Worktree lifecycle commands:
 
 ```bash
 python3 mvp/bedagent_mvp.py worktree list --worktree-root .bedagent/worktrees
 python3 mvp/bedagent_mvp.py worktree cleanup --run-id <run_id> --allow-side-effects --force
+python3 mvp/bedagent_mvp.py worktree cleanup --apply-retention --blanket-policy mvp/blanket_policy.json --allow-side-effects --force
 ```
 
 ## Current limitations
@@ -105,11 +120,11 @@ python3 mvp/bedagent_mvp.py worktree cleanup --run-id <run_id> --allow-side-effe
 - No speech input/output yet.
 - No external model API; stage reasoning is heuristic.
 - No container executor yet; live execution currently focuses on git worktree path.
-- Memory has recap/tail and topic/status summary; no semantic retrieval/ranking yet.
+- Memory retrieval is lexical-semantic (TF-IDF); no embedding/rerank pipeline yet.
 
 ## Next implementation steps
 
-1. Add TTL policy and safe retention defaults for stale worktrees.
-2. Add semantic memory retrieval/rerank for prior-run suggestions.
+1. Add embedding-backed retrieval and multi-field rerank for memory search.
+2. Add scheduled/automatic retention enforcement with dry-run report mode.
 3. Add container/VM adapters behind the same side-effect gate.
 4. Add voice adapter as optional input/output layer.

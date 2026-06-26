@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import subprocess
 import textwrap
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -223,6 +224,7 @@ def stage_blanket(plan: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any
         "requires_confirmation": confirmation,
         "allow_auto_confirm_red": policy["allow_auto_confirm_red"],
         "allow_live_adapter_by_risk": policy["allow_live_adapter_by_risk"],
+        "worktree_retention": policy["worktree_retention"],
     }
 
 
@@ -348,6 +350,44 @@ def run_command(command: list[str]) -> tuple[int, str, str]:
     return proc.returncode, proc.stdout, proc.stderr
 
 
+def evaluate_live_policy(
+    risk_level: str, idea: str, policy: dict[str, Any], allow_side_effects: bool
+) -> dict[str, Any]:
+    checks = []
+    live_by_risk = policy["allow_live_adapter_by_risk"]
+    risk_allowed = bool(live_by_risk.get(risk_level, False))
+    checks.append(
+        {
+            "check": "risk_gate",
+            "pass": risk_allowed,
+            "detail": f"risk={risk_level}, allowed={risk_allowed}",
+        }
+    )
+
+    blocked_keywords = {k.lower() for k in policy.get("live_adapter_block_keywords", [])}
+    lowered_idea = idea.lower()
+    hit = sorted(k for k in blocked_keywords if k in lowered_idea)
+    keyword_ok = not hit
+    checks.append(
+        {
+            "check": "keyword_gate",
+            "pass": keyword_ok,
+            "detail": "no blocked keywords matched" if keyword_ok else f"blocked keywords: {', '.join(hit)}",
+        }
+    )
+
+    side_effect_ok = bool(allow_side_effects)
+    checks.append(
+        {
+            "check": "side_effect_flag",
+            "pass": side_effect_ok,
+            "detail": "allow-side-effects enabled" if side_effect_ok else "missing --allow-side-effects",
+        }
+    )
+    allowed = risk_allowed and keyword_ok and side_effect_ok
+    return {"allowed": allowed, "checks": checks, "blocked_keywords": hit}
+
+
 def act_with_worktree_live_adapter(
     hands_dir: Path,
     repo_root: Path,
@@ -358,28 +398,29 @@ def act_with_worktree_live_adapter(
     policy: dict[str, Any],
     idea: str,
 ) -> dict[str, Any]:
-    live_by_risk = policy["allow_live_adapter_by_risk"]
-    if not live_by_risk.get(risk_level, False):
+    explain = evaluate_live_policy(
+        risk_level=risk_level, idea=idea, policy=policy, allow_side_effects=allow_side_effects
+    )
+    if not explain["checks"][0]["pass"]:
         return {
             "status": "policy_blocked_live_risk",
             "adapter": "worktree-live",
             "reason": f"live adapter is disabled for risk level '{risk_level}'",
+            "policy_explain": explain,
         }
-    blocked_keywords = {k.lower() for k in policy.get("live_adapter_block_keywords", [])}
-    lowered_idea = idea.lower()
-    hit = sorted(k for k in blocked_keywords if k in lowered_idea)
-    if hit:
+    if not explain["checks"][1]["pass"]:
         return {
             "status": "policy_blocked_live_keyword",
             "adapter": "worktree-live",
-            "reason": f"live adapter blocked by keywords: {', '.join(hit)}",
+            "reason": f"live adapter blocked by keywords: {', '.join(explain['blocked_keywords'])}",
+            "policy_explain": explain,
         }
-
-    if not allow_side_effects:
+    if not explain["checks"][2]["pass"]:
         return {
             "status": "policy_blocked_side_effects",
             "adapter": "worktree-live",
             "reason": "use --allow-side-effects to enable real worktree execution",
+            "policy_explain": explain,
         }
 
     git_ctx = detect_git_context(repo_root)
@@ -388,6 +429,7 @@ def act_with_worktree_live_adapter(
             "status": "adapter_error",
             "adapter": "worktree-live",
             "reason": f"'{repo_root}' is not a git repository",
+            "policy_explain": explain,
         }
 
     target_branch = f"bedagent/run-{run_id.replace('.', '-').lower()}"
@@ -446,6 +488,7 @@ def act_with_worktree_live_adapter(
             "target_branch": target_branch,
             "worktree_path": str(worktree_dir),
             "transcript_path": str(hands_dir / "WORKTREE_LIVE_TRANSCRIPT.md"),
+            "policy_explain": explain,
         }
 
     status_cmd = ["git", "-C", str(worktree_dir), "status", "--short", "--branch"]
@@ -459,6 +502,7 @@ def act_with_worktree_live_adapter(
         "status_output": status_out.strip(),
         "status_error": status_err.strip(),
         "transcript_path": str(hands_dir / "WORKTREE_LIVE_TRANSCRIPT.md"),
+        "policy_explain": explain,
     }
 
 
@@ -535,6 +579,7 @@ def load_blanket_policy(policy_path: Path) -> dict[str, Any]:
         "require_confirmation_by_risk": {"green": False, "yellow": True, "red": True},
         "allow_live_adapter_by_risk": {"green": True, "yellow": True, "red": False},
         "live_adapter_block_keywords": ["production", "prod", "billing", "payment"],
+        "worktree_retention": {"ttl_hours": 24, "max_keep": 5},
     }
     if not policy_path.exists():
         return default_policy
@@ -548,6 +593,10 @@ def load_blanket_policy(policy_path: Path) -> dict[str, Any]:
     merged["allow_live_adapter_by_risk"] = {
         **default_policy["allow_live_adapter_by_risk"],
         **loaded.get("allow_live_adapter_by_risk", {}),
+    }
+    merged["worktree_retention"] = {
+        **default_policy["worktree_retention"],
+        **loaded.get("worktree_retention", {}),
     }
     return merged
 
@@ -618,6 +667,56 @@ def summarize_recent_entries(entries: list[dict[str, Any]]) -> dict[str, Any]:
     return {"top_topics": [{"token": k, "count": v} for k, v in top_topics], "status_counts": status_counts}
 
 
+def tokenize_text(value: str) -> list[str]:
+    return re.findall(r"[a-z]{3,}", value.lower())
+
+
+def compute_idf(doc_tokens: list[list[str]]) -> dict[str, float]:
+    n = len(doc_tokens)
+    if n == 0:
+        return {}
+    df: dict[str, int] = {}
+    for tokens in doc_tokens:
+        for token in set(tokens):
+            df[token] = df.get(token, 0) + 1
+    return {token: math.log((1 + n) / (1 + count)) + 1 for token, count in df.items()}
+
+
+def vectorize(tokens: list[str], idf: dict[str, float]) -> dict[str, float]:
+    tf: dict[str, int] = {}
+    for token in tokens:
+        tf[token] = tf.get(token, 0) + 1
+    total = sum(tf.values()) or 1
+    return {token: (count / total) * idf.get(token, 0.0) for token, count in tf.items()}
+
+
+def cosine_similarity(left: dict[str, float], right: dict[str, float]) -> float:
+    if not left or not right:
+        return 0.0
+    dot = sum(left[k] * right.get(k, 0.0) for k in left)
+    lnorm = math.sqrt(sum(v * v for v in left.values()))
+    rnorm = math.sqrt(sum(v * v for v in right.values()))
+    if lnorm == 0 or rnorm == 0:
+        return 0.0
+    return dot / (lnorm * rnorm)
+
+
+def semantic_memory_search(entries: list[dict[str, Any]], query: str, top_k: int) -> list[dict[str, Any]]:
+    if not entries:
+        return []
+    docs = [tokenize_text(str(entry.get("idea", "")) + " " + str(entry.get("pillow_note", ""))) for entry in entries]
+    query_tokens = tokenize_text(query)
+    idf = compute_idf(docs + [query_tokens])
+    qvec = vectorize(query_tokens, idf)
+    ranked = []
+    for entry, tokens in zip(entries, docs):
+        dvec = vectorize(tokens, idf)
+        score = cosine_similarity(qvec, dvec)
+        ranked.append({"score": round(score, 6), "entry": entry})
+    ranked.sort(key=lambda item: item["score"], reverse=True)
+    return ranked[: max(1, top_k)]
+
+
 def build_recap(journal_path: Path, limit: int) -> dict[str, Any]:
     entries = read_memory_entries(journal_path, limit=limit)
     by_risk: dict[str, int] = {"green": 0, "yellow": 0, "red": 0}
@@ -647,9 +746,50 @@ def list_managed_worktrees(worktree_root: Path) -> list[dict[str, Any]]:
                 "run_id": child.name,
                 "path": str(child),
                 "has_git_dir": (child / ".git").exists(),
+                "mtime_epoch": child.stat().st_mtime,
             }
         )
     return items
+
+
+def parse_run_id_datetime(run_id: str) -> datetime | None:
+    match = re.match(r"^(\d{8}T\d{6})\.\d{6}Z-[0-9a-f]{6}$", run_id)
+    if not match:
+        return None
+    try:
+        base = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S")
+        return base.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def select_worktree_cleanup_candidates(
+    items: list[dict[str, Any]], now: datetime, ttl_hours: int, max_keep: int
+) -> list[dict[str, Any]]:
+    if not items:
+        return []
+    with_dt = []
+    for item in items:
+        dt = parse_run_id_datetime(item["run_id"])
+        if dt is None:
+            dt = datetime.fromtimestamp(item["mtime_epoch"], tz=timezone.utc)
+        with_dt.append({**item, "run_dt": dt})
+
+    sorted_items = sorted(with_dt, key=lambda item: item["run_dt"], reverse=True)
+    keep_set = {item["path"] for item in sorted_items[: max(0, max_keep)]}
+    cutoff = now - timedelta(hours=max(0, ttl_hours))
+
+    candidates = []
+    for item in with_dt:
+        ttl_expired = item["run_dt"] < cutoff
+        over_max = item["path"] not in keep_set
+        if ttl_expired or over_max:
+            item["cleanup_reason"] = {
+                "ttl_expired": ttl_expired,
+                "over_max_keep": over_max,
+            }
+            candidates.append(item)
+    return sorted(candidates, key=lambda item: item["run_dt"])
 
 
 def remove_worktree(repo_root: Path, worktree_path: Path, force: bool) -> tuple[int, str, str]:
@@ -717,6 +857,7 @@ def run_closed_loop(
             "sandbox_adapter": sandbox_adapter,
             "memory_journal_path": str(memory_journal_path),
             "git_repo_root": str(git_repo_root),
+            "allow_side_effects": allow_side_effects,
         },
         "capture": capture,
         "sage": sage,
@@ -805,6 +946,26 @@ def parse_args() -> argparse.Namespace:
         help="number of recent entries to include",
     )
 
+    memory_search = sub.add_parser("memory-search", help="semantic search in memory journal")
+    memory_search.add_argument("--query", required=True, help="query text for memory retrieval")
+    memory_search.add_argument(
+        "--memory-journal",
+        default=".bedagent/memory/journal.ndjson",
+        help="append-only memory journal path",
+    )
+    memory_search.add_argument(
+        "--limit",
+        default=50,
+        type=int,
+        help="how many recent journal entries to search",
+    )
+    memory_search.add_argument(
+        "--top-k",
+        default=3,
+        type=int,
+        help="number of results to return",
+    )
+
     worktree = sub.add_parser("worktree", help="manage bedagent-managed worktrees")
     worktree.add_argument(
         "action",
@@ -815,6 +976,11 @@ def parse_args() -> argparse.Namespace:
         "--git-repo-root",
         default=".",
         help="repository root path for git worktree operations",
+    )
+    worktree.add_argument(
+        "--blanket-policy",
+        default="mvp/blanket_policy.json",
+        help="policy file used for retention settings",
     )
     worktree.add_argument(
         "--worktree-root",
@@ -839,6 +1005,11 @@ def parse_args() -> argparse.Namespace:
         "--allow-side-effects",
         action="store_true",
         help="required to run cleanup actions",
+    )
+    worktree.add_argument(
+        "--apply-retention",
+        action="store_true",
+        help="cleanup by retention policy (uses TTL and max_keep from blanket policy)",
     )
 
     return parser.parse_args()
@@ -873,9 +1044,28 @@ def main() -> int:
             print("latest_run: none")
         return 0
 
+    if args.command == "memory-search":
+        entries = read_memory_entries(Path(args.memory_journal), limit=max(1, args.limit))
+        hits = semantic_memory_search(entries=entries, query=args.query, top_k=max(1, args.top_k))
+        print("")
+        print("=== bedagent memory semantic search ===")
+        print(f"journal: {args.memory_journal}")
+        print(f"query: {args.query}")
+        print(f"scanned: {len(entries)}")
+        print(f"returned: {len(hits)}")
+        for idx, hit in enumerate(hits, start=1):
+            entry = hit["entry"]
+            print(
+                f"{idx}. score={hit['score']} run_id={entry.get('run_id', '-')}"
+                f" risk={entry.get('risk_level', '-')} status={entry.get('act_status', '-')}"
+            )
+            print(f"   idea: {entry.get('idea', '-')}")
+        return 0
+
     if args.command == "worktree":
         repo_root = Path(args.git_repo_root)
         worktree_root = Path(args.worktree_root)
+        policy = load_blanket_policy(Path(args.blanket_policy))
         if args.action == "list":
             items = list_managed_worktrees(worktree_root)
             print("")
@@ -890,11 +1080,33 @@ def main() -> int:
             if not args.allow_side_effects:
                 print("Policy block: pass --allow-side-effects to cleanup worktrees.")
                 return 2
-            if not args.all and not args.run_id:
+            if not args.apply_retention and not args.all and not args.run_id:
                 print("Input error: provide --run-id or --all for cleanup.")
                 return 2
             targets = []
-            if args.all:
+            if args.apply_retention:
+                items = list_managed_worktrees(worktree_root)
+                retention = policy["worktree_retention"]
+                candidates = select_worktree_cleanup_candidates(
+                    items=items,
+                    now=datetime.now(timezone.utc),
+                    ttl_hours=int(retention["ttl_hours"]),
+                    max_keep=int(retention["max_keep"]),
+                )
+                targets = [Path(item["path"]) for item in candidates]
+                print("")
+                print("=== bedagent worktree retention plan ===")
+                print(
+                    f"ttl_hours={retention['ttl_hours']} max_keep={retention['max_keep']}"
+                    f" candidates={len(targets)}"
+                )
+                for item in candidates:
+                    reason = item["cleanup_reason"]
+                    print(
+                        f"- candidate: {item['path']} "
+                        f"(ttl_expired={reason['ttl_expired']}, over_max_keep={reason['over_max_keep']})"
+                    )
+            elif args.all:
                 targets = [Path(item["path"]) for item in list_managed_worktrees(worktree_root)]
             else:
                 targets = [worktree_root / args.run_id]

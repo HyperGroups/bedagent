@@ -17,6 +17,7 @@ This MVP turns the design into a runnable local controller with:
 - pluggable sandbox adapters (`simulated`, `worktree-dry-run`, `worktree-live`);
 - append-only memory journal;
 - memory recap command for quick bedside review;
+- memory semantic search command for retrieving similar prior runs;
 - one-line short report (`pillow_note`).
 
 ## Quick start
@@ -50,6 +51,15 @@ Memory recap:
 python3 mvp/bedagent_mvp.py recap --memory-journal .bedagent/memory/journal.ndjson --limit 5
 ```
 
+Memory semantic search:
+
+```bash
+python3 mvp/bedagent_mvp.py memory-search \
+  --query "billing rollout plan" \
+  --memory-journal .bedagent/memory/journal.ndjson \
+  --top-k 3
+```
+
 List managed worktrees:
 
 ```bash
@@ -61,6 +71,19 @@ Cleanup a specific worktree:
 ```bash
 python3 mvp/bedagent_mvp.py worktree cleanup \
   --run-id <run_id> \
+  --git-repo-root . \
+  --blanket-policy mvp/blanket_policy.json \
+  --worktree-root .bedagent/worktrees \
+  --allow-side-effects \
+  --force
+```
+
+Cleanup by retention policy (TTL + max_keep):
+
+```bash
+python3 mvp/bedagent_mvp.py worktree cleanup \
+  --apply-retention \
+  --blanket-policy mvp/blanket_policy.json \
   --git-repo-root . \
   --worktree-root .bedagent/worktrees \
   --allow-side-effects \
@@ -74,8 +97,9 @@ python3 mvp/bedagent_mvp.py worktree cleanup \
 - `--memory-journal`: append-only NDJSON journal file.
 - `--git-repo-root`: git repository root used by worktree dry-run adapter.
 - `--allow-side-effects`: required for `worktree-live`.
-- `worktree` subcommand: lifecycle operations (`list`, `cleanup`).
+- `worktree` subcommand: lifecycle operations (`list`, `cleanup`) with optional policy retention cleanup.
 - `recap` subcommand: memory playback with topic/status summary.
+- `memory-search` subcommand: TF-IDF cosine retrieval over recent journal entries.
 
 ## Output artifacts
 
@@ -102,5 +126,6 @@ When execution is approved, the sandbox subfolder also includes:
 - `worktree-dry-run` does not run git commands; it only emits a plan file.
 - `worktree-live` is blocked unless `--allow-side-effects` is explicitly set.
 - `worktree-live` is also gated by blanket policy risk/keyword rules.
+- `worktree cleanup --apply-retention` uses `worktree_retention.ttl_hours` and `max_keep`.
 - High-risk ideas require stronger explicit confirmation (`YES`) in interactive mode.
 - `--auto-confirm` does not bypass red-risk policy when `allow_auto_confirm_red` is `false`.
