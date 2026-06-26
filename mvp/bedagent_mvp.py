@@ -222,6 +222,7 @@ def stage_blanket(plan: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any
         "risk_reason": plan["risk"]["reason"],
         "requires_confirmation": confirmation,
         "allow_auto_confirm_red": policy["allow_auto_confirm_red"],
+        "allow_live_adapter_by_risk": policy["allow_live_adapter_by_risk"],
     }
 
 
@@ -353,7 +354,27 @@ def act_with_worktree_live_adapter(
     run_id: str,
     plan: dict[str, Any],
     allow_side_effects: bool,
+    risk_level: str,
+    policy: dict[str, Any],
+    idea: str,
 ) -> dict[str, Any]:
+    live_by_risk = policy["allow_live_adapter_by_risk"]
+    if not live_by_risk.get(risk_level, False):
+        return {
+            "status": "policy_blocked_live_risk",
+            "adapter": "worktree-live",
+            "reason": f"live adapter is disabled for risk level '{risk_level}'",
+        }
+    blocked_keywords = {k.lower() for k in policy.get("live_adapter_block_keywords", [])}
+    lowered_idea = idea.lower()
+    hit = sorted(k for k in blocked_keywords if k in lowered_idea)
+    if hit:
+        return {
+            "status": "policy_blocked_live_keyword",
+            "adapter": "worktree-live",
+            "reason": f"live adapter blocked by keywords: {', '.join(hit)}",
+        }
+
     if not allow_side_effects:
         return {
             "status": "policy_blocked_side_effects",
@@ -444,10 +465,12 @@ def act_with_worktree_live_adapter(
 def stage_act(
     ctx: RunContext,
     plan: dict[str, Any],
+    blanket: dict[str, Any],
     confirm: dict[str, Any],
     sandbox_adapter: str,
     git_repo_root: Path,
     allow_side_effects: bool,
+    policy: dict[str, Any],
 ) -> dict[str, Any]:
     hands_dir = ctx.run_dir / "hands"
     hands_dir.mkdir(parents=True, exist_ok=True)
@@ -472,6 +495,9 @@ def stage_act(
             run_id=ctx.run_id,
             plan=plan,
             allow_side_effects=allow_side_effects,
+            risk_level=blanket["risk_level"],
+            policy=policy,
+            idea=ctx.idea,
         )
     else:
         result = {"status": "adapter_error", "adapter": sandbox_adapter, "reason": "unknown adapter"}
@@ -488,6 +514,10 @@ def stage_report(act: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
         sentence = "Closed loop completed: plan approved, worktree was created with side effects enabled."
     elif act["status"] == "policy_blocked_side_effects":
         sentence = "Closed loop paused: side effects are blocked without explicit allow-side-effects."
+    elif act["status"] == "policy_blocked_live_risk":
+        sentence = "Closed loop paused: live adapter is blocked for this risk level by policy."
+    elif act["status"] == "policy_blocked_live_keyword":
+        sentence = "Closed loop paused: live adapter blocked by policy keyword."
     else:
         sentence = "Closed loop paused: waiting for explicit execution approval."
     return {"pillow_note": sentence, "risk_level": plan["risk"]["level"]}
@@ -503,6 +533,8 @@ def load_blanket_policy(policy_path: Path) -> dict[str, Any]:
         "yellow_keywords": sorted(DEFAULT_YELLOW_KEYWORDS),
         "allow_auto_confirm_red": False,
         "require_confirmation_by_risk": {"green": False, "yellow": True, "red": True},
+        "allow_live_adapter_by_risk": {"green": True, "yellow": True, "red": False},
+        "live_adapter_block_keywords": ["production", "prod", "billing", "payment"],
     }
     if not policy_path.exists():
         return default_policy
@@ -512,6 +544,10 @@ def load_blanket_policy(policy_path: Path) -> dict[str, Any]:
     merged["require_confirmation_by_risk"] = {
         **default_policy["require_confirmation_by_risk"],
         **loaded.get("require_confirmation_by_risk", {}),
+    }
+    merged["allow_live_adapter_by_risk"] = {
+        **default_policy["allow_live_adapter_by_risk"],
+        **loaded.get("allow_live_adapter_by_risk", {}),
     }
     return merged
 
@@ -553,6 +589,35 @@ def read_memory_entries(journal_path: Path, limit: int) -> list[dict[str, Any]]:
     return entries
 
 
+def summarize_recent_entries(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    stopwords = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "into",
+        "need",
+        "update",
+        "implement",
+        "prepare",
+    }
+    counts: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
+    for entry in entries:
+        status = str(entry.get("act_status", "unknown"))
+        status_counts[status] = status_counts.get(status, 0) + 1
+        idea = str(entry.get("idea", "")).lower()
+        for token in re.findall(r"[a-z]{4,}", idea):
+            if token in stopwords:
+                continue
+            counts[token] = counts.get(token, 0) + 1
+    top_topics = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+    return {"top_topics": [{"token": k, "count": v} for k, v in top_topics], "status_counts": status_counts}
+
+
 def build_recap(journal_path: Path, limit: int) -> dict[str, Any]:
     entries = read_memory_entries(journal_path, limit=limit)
     by_risk: dict[str, int] = {"green": 0, "yellow": 0, "red": 0}
@@ -564,9 +629,35 @@ def build_recap(journal_path: Path, limit: int) -> dict[str, Any]:
         "journal_path": str(journal_path),
         "total_loaded": len(entries),
         "risk_breakdown": by_risk,
+        "summary": summarize_recent_entries(entries),
         "latest": latest,
         "recent": entries,
     }
+
+
+def list_managed_worktrees(worktree_root: Path) -> list[dict[str, Any]]:
+    if not worktree_root.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    for child in sorted(worktree_root.iterdir()):
+        if not child.is_dir():
+            continue
+        items.append(
+            {
+                "run_id": child.name,
+                "path": str(child),
+                "has_git_dir": (child / ".git").exists(),
+            }
+        )
+    return items
+
+
+def remove_worktree(repo_root: Path, worktree_path: Path, force: bool) -> tuple[int, str, str]:
+    command = ["git", "-C", str(repo_root), "worktree", "remove"]
+    if force:
+        command.append("--force")
+    command.append(str(worktree_path))
+    return run_command(command)
 
 
 def run_closed_loop(
@@ -598,10 +689,12 @@ def run_closed_loop(
     act = stage_act(
         ctx,
         plan,
+        blanket,
         confirm,
         sandbox_adapter=sandbox_adapter,
         git_repo_root=git_repo_root,
         allow_side_effects=allow_side_effects,
+        policy=policy,
     )
     report = stage_report(act, plan)
     memory = stage_memory(
@@ -712,6 +805,42 @@ def parse_args() -> argparse.Namespace:
         help="number of recent entries to include",
     )
 
+    worktree = sub.add_parser("worktree", help="manage bedagent-managed worktrees")
+    worktree.add_argument(
+        "action",
+        choices=["list", "cleanup"],
+        help="list or cleanup managed worktrees",
+    )
+    worktree.add_argument(
+        "--git-repo-root",
+        default=".",
+        help="repository root path for git worktree operations",
+    )
+    worktree.add_argument(
+        "--worktree-root",
+        default=".bedagent/worktrees",
+        help="managed worktree root path",
+    )
+    worktree.add_argument(
+        "--run-id",
+        help="specific run id to cleanup (required unless --all is set)",
+    )
+    worktree.add_argument(
+        "--all",
+        action="store_true",
+        help="cleanup all managed worktrees",
+    )
+    worktree.add_argument(
+        "--force",
+        action="store_true",
+        help="use --force when removing worktrees",
+    )
+    worktree.add_argument(
+        "--allow-side-effects",
+        action="store_true",
+        help="required to run cleanup actions",
+    )
+
     return parser.parse_args()
 
 
@@ -733,6 +862,9 @@ def main() -> int:
         print(f"journal: {recap['journal_path']}")
         print(f"loaded: {recap['total_loaded']}")
         print(f"risk_breakdown: {json.dumps(recap['risk_breakdown'], ensure_ascii=False)}")
+        print(f"status_counts: {json.dumps(recap['summary']['status_counts'], ensure_ascii=False)}")
+        top_tokens = [f"{item['token']}:{item['count']}" for item in recap["summary"]["top_topics"]]
+        print(f"top_topics: {', '.join(top_tokens) if top_tokens else '-'}")
         latest = recap["latest"]
         if latest:
             print(f"latest_run: {latest.get('run_id', '-')}")
@@ -740,6 +872,51 @@ def main() -> int:
         else:
             print("latest_run: none")
         return 0
+
+    if args.command == "worktree":
+        repo_root = Path(args.git_repo_root)
+        worktree_root = Path(args.worktree_root)
+        if args.action == "list":
+            items = list_managed_worktrees(worktree_root)
+            print("")
+            print("=== bedagent managed worktrees ===")
+            print(f"root: {worktree_root}")
+            print(f"count: {len(items)}")
+            for item in items:
+                print(f"- {item['run_id']}: {item['path']}")
+            return 0
+
+        if args.action == "cleanup":
+            if not args.allow_side_effects:
+                print("Policy block: pass --allow-side-effects to cleanup worktrees.")
+                return 2
+            if not args.all and not args.run_id:
+                print("Input error: provide --run-id or --all for cleanup.")
+                return 2
+            targets = []
+            if args.all:
+                targets = [Path(item["path"]) for item in list_managed_worktrees(worktree_root)]
+            else:
+                targets = [worktree_root / args.run_id]
+            removed = []
+            failed = []
+            for target in targets:
+                code, out, err = remove_worktree(repo_root=repo_root, worktree_path=target, force=args.force)
+                if code == 0:
+                    removed.append({"path": str(target), "stdout": out.strip()})
+                else:
+                    failed.append({"path": str(target), "stderr": err.strip(), "stdout": out.strip()})
+            print("")
+            print("=== bedagent worktree cleanup ===")
+            print(f"removed: {len(removed)}")
+            print(f"failed: {len(failed)}")
+            for item in removed:
+                print(f"- removed: {item['path']}")
+            for item in failed:
+                print(f"- failed: {item['path']} ({item['stderr'] or 'unknown error'})")
+            return 0 if not failed else 1
+
+        raise ValueError(f"Unsupported worktree action: {args.action}")
 
     if args.command != "run":
         raise ValueError(f"Unsupported command: {args.command}")

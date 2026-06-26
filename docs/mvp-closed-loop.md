@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.3.0-mvp (prototype)
-Status: implemented (policy + adapter + memory + recap + side-effect gate)
+Product Milestone: v0.4.0-mvp (prototype)
+Status: implemented (policy + adapter + memory + recap + worktree lifecycle)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -57,6 +57,8 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    Produces one sentence `pillow_note`.
 10. **Memory**  
    Appends run summary to `.bedagent/memory/journal.ndjson` (append-only).
+11. **Worktree Lifecycle**  
+   Supports managed worktree listing and cleanup through `worktree` subcommand.
 
 ## Output contract
 
@@ -91,16 +93,23 @@ Memory recap command:
 python3 mvp/bedagent_mvp.py recap --memory-journal .bedagent/memory/journal.ndjson --limit 5
 ```
 
+Worktree lifecycle commands:
+
+```bash
+python3 mvp/bedagent_mvp.py worktree list --worktree-root .bedagent/worktrees
+python3 mvp/bedagent_mvp.py worktree cleanup --run-id <run_id> --allow-side-effects --force
+```
+
 ## Current limitations
 
 - No speech input/output yet.
 - No external model API; stage reasoning is heuristic.
-- No container executor yet; live execution currently only covers git worktree creation path.
-- Memory has recap/tail view; no semantic retrieval/ranking yet.
+- No container executor yet; live execution currently focuses on git worktree path.
+- Memory has recap/tail and topic/status summary; no semantic retrieval/ranking yet.
 
 ## Next implementation steps
 
-1. Add cleanup policy for stale worktrees created by `worktree-live`.
+1. Add TTL policy and safe retention defaults for stale worktrees.
 2. Add semantic memory retrieval/rerank for prior-run suggestions.
 3. Add container/VM adapters behind the same side-effect gate.
 4. Add voice adapter as optional input/output layer.

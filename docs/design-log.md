@@ -362,3 +362,37 @@ product_milestone: v0.3.0-mvp
 - `worktree-live` 只覆盖 worktree 创建，不做自动提交/推送；
 - 未显式传入 `--allow-side-effects` 时，live 执行必须阻断；
 - recap 只做结构化回放，不做语义摘要或检索增强。
+
+## ADR-0012：增加 worktree 生命周期管理与 live adapter 细粒度策略闸门
+
+```yaml
+date: 2026-06-26
+design_version: D0.1
+status: accepted
+product_milestone: v0.4.0-mvp
+```
+
+### 决策
+
+在 v0.3.0-mvp 基础上继续推进：
+
+1. 增加 `worktree` 子命令，支持 `list` / `cleanup`；
+2. live adapter 增加按风险级别和关键词的策略闸门；
+3. recap 增加 topic/status 的轻量摘要。
+
+### 原因
+
+仅有“创建 worktree”不足以形成完整 Hands 运维闭环；仅有“追加日志”不足以形成快速回看闭环。
+
+v0.4 目标是让控制层具备：
+
+- 可执行（create）；
+- 可管理（list/cleanup）；
+- 可回看（summary recap）；
+- 可约束（risk + keyword gates）。
+
+### 边界
+
+- cleanup 仍需显式 `--allow-side-effects`；
+- 不做自动 TTL 清理或批量策略调度；
+- 摘要仍是启发式，不引入模型依赖。

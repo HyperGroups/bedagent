@@ -50,6 +50,23 @@ Memory recap:
 python3 mvp/bedagent_mvp.py recap --memory-journal .bedagent/memory/journal.ndjson --limit 5
 ```
 
+List managed worktrees:
+
+```bash
+python3 mvp/bedagent_mvp.py worktree list --worktree-root .bedagent/worktrees
+```
+
+Cleanup a specific worktree:
+
+```bash
+python3 mvp/bedagent_mvp.py worktree cleanup \
+  --run-id <run_id> \
+  --git-repo-root . \
+  --worktree-root .bedagent/worktrees \
+  --allow-side-effects \
+  --force
+```
+
 ## Key runtime flags
 
 - `--blanket-policy`: blanket policy JSON file path.
@@ -57,6 +74,8 @@ python3 mvp/bedagent_mvp.py recap --memory-journal .bedagent/memory/journal.ndjs
 - `--memory-journal`: append-only NDJSON journal file.
 - `--git-repo-root`: git repository root used by worktree dry-run adapter.
 - `--allow-side-effects`: required for `worktree-live`.
+- `worktree` subcommand: lifecycle operations (`list`, `cleanup`).
+- `recap` subcommand: memory playback with topic/status summary.
 
 ## Output artifacts
 
@@ -82,5 +101,6 @@ When execution is approved, the sandbox subfolder also includes:
 - This MVP intentionally uses heuristic logic (no model API required).
 - `worktree-dry-run` does not run git commands; it only emits a plan file.
 - `worktree-live` is blocked unless `--allow-side-effects` is explicitly set.
+- `worktree-live` is also gated by blanket policy risk/keyword rules.
 - High-risk ideas require stronger explicit confirmation (`YES`) in interactive mode.
 - `--auto-confirm` does not bypass red-risk policy when `allow_auto_confirm_red` is `false`.

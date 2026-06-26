@@ -46,7 +46,7 @@ D0.1 的核心定义：
 bedagent = 面向床上思想者的 Agent 控制系统
 形态 = 控制层 + 协议 + 角色系统
 链路 = Nest → Sage → Prune → Dream → Fold → Blanket → Hands → Pillow Note → Bedside Journal
-Milestone = v0.3.0-mvp (policy + adapter + memory recap + side-effect gate)
+Milestone = v0.4.0-mvp (policy + adapter + recap summary + worktree lifecycle)
 ```
 
 ## Design Version 规则

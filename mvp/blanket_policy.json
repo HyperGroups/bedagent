@@ -29,6 +29,17 @@
     "write"
   ],
   "allow_auto_confirm_red": false,
+  "allow_live_adapter_by_risk": {
+    "green": true,
+    "yellow": true,
+    "red": false
+  },
+  "live_adapter_block_keywords": [
+    "production",
+    "prod",
+    "billing",
+    "payment"
+  ],
   "require_confirmation_by_risk": {
     "green": false,
     "yellow": true,

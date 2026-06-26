@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bedagent_mvp import build_recap, build_run_id, run_closed_loop
+from bedagent_mvp import build_recap, build_run_id, list_managed_worktrees, run_closed_loop
 
 
 class BedagentMvpTests(unittest.TestCase):
@@ -132,6 +132,40 @@ class BedagentMvpTests(unittest.TestCase):
             recap = build_recap(journal_path=journal, limit=5)
             self.assertEqual(recap["total_loaded"], 2)
             self.assertIsNotNone(recap["latest"])
+            self.assertIn("summary", recap)
+            self.assertIn("status_counts", recap["summary"])
+
+    def test_custom_policy_can_block_live_adapter_by_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            policy_path = Path(tmp) / "policy.json"
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "allow_live_adapter_by_risk": {"green": True, "yellow": False, "red": False},
+                        "live_adapter_block_keywords": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest = self.run_with_defaults(
+                tmp,
+                idea="Update docs summary and links.",
+                auto_confirm=True,
+                non_interactive=False,
+                sandbox_adapter="worktree-live",
+                allow_side_effects=True,
+                blanket_policy_path=policy_path,
+            )
+            self.assertEqual(manifest["act"]["status"], "policy_blocked_live_risk")
+
+    def test_list_managed_worktrees_reads_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "worktrees"
+            (root / "run-a").mkdir(parents=True)
+            (root / "run-b").mkdir(parents=True)
+            items = list_managed_worktrees(root)
+            self.assertEqual(len(items), 2)
+            self.assertEqual(items[0]["run_id"], "run-a")
 
 
 if __name__ == "__main__":
