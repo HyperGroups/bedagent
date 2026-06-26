@@ -58,6 +58,9 @@ Memory semantic search:
 python3 mvp/bedagent_mvp.py memory-search \
   --query "billing rollout plan" \
   --memory-journal .bedagent/memory/journal.ndjson \
+  --risk-level yellow \
+  --act-status worktree_created \
+  --since 2026-06-26T00:00:00Z \
   --top-k 3
 ```
 
@@ -96,7 +99,8 @@ Retention dry-run report (no deletion):
 ```bash
 python3 mvp/bedagent_mvp.py worktree retention-report \
   --blanket-policy mvp/blanket_policy.json \
-  --worktree-root .bedagent/worktrees
+  --worktree-root .bedagent/worktrees \
+  --output-json .bedagent/reports/retention-report.json
 ```
 
 ## Key runtime flags
@@ -109,6 +113,7 @@ python3 mvp/bedagent_mvp.py worktree retention-report \
 - `worktree` subcommand: lifecycle operations (`list`, `cleanup`) with optional policy retention cleanup.
 - `recap` subcommand: memory playback with topic/status summary.
 - `memory-search` subcommand: weighted multi-field TF-IDF cosine retrieval over recent journal entries.
+- `memory-search` supports `--risk-level`, `--act-status`, `--since` pre-filters.
 
 ## Output artifacts
 
@@ -137,5 +142,6 @@ When execution is approved, the sandbox subfolder also includes:
 - `worktree-live` is also gated by blanket policy risk/keyword rules.
 - `worktree cleanup --apply-retention` uses `worktree_retention.ttl_hours` and `max_keep`.
 - `worktree retention-report` previews retention cleanup without side effects.
+- run manifest includes `policy_explain.schema_version` for explain contract tracking.
 - High-risk ideas require stronger explicit confirmation (`YES`) in interactive mode.
 - `--auto-confirm` does not bypass red-risk policy when `allow_auto_confirm_red` is `false`.

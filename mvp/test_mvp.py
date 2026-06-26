@@ -9,7 +9,9 @@ from bedagent_mvp import (
     build_recap,
     build_run_id,
     evaluate_live_policy,
+    filter_memory_entries,
     list_managed_worktrees,
+    parse_iso_datetime,
     run_closed_loop,
     select_worktree_cleanup_candidates,
     semantic_memory_search,
@@ -66,6 +68,7 @@ class BedagentMvpTests(unittest.TestCase):
             payload = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertIn("report", payload)
             self.assertIn("policy_explain", payload)
+            self.assertEqual(payload["policy_explain"]["schema_version"], "1.0.0")
 
     def test_worktree_dry_run_generates_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -200,6 +203,7 @@ class BedagentMvpTests(unittest.TestCase):
         hits = semantic_memory_search(entries=entries, query="billing plan", top_k=1)
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0]["entry"]["run_id"], "1")
+        self.assertIn("detail", hits[0])
 
     def test_select_worktree_cleanup_candidates_by_ttl_and_max_keep(self) -> None:
         now = datetime(2026, 6, 26, 14, 0, 0, tzinfo=timezone.utc)
@@ -224,6 +228,28 @@ class BedagentMvpTests(unittest.TestCase):
         paths = {item["path"] for item in candidates}
         self.assertIn("/tmp/w2", paths)
         self.assertIn("/tmp/w3", paths)
+
+    def test_filter_memory_entries_applies_risk_status_and_since(self) -> None:
+        entries = [
+            {
+                "run_id": "1",
+                "recorded_at": "2026-06-26T14:00:00+00:00",
+                "risk_level": "green",
+                "act_status": "simulated_success",
+            },
+            {
+                "run_id": "2",
+                "recorded_at": "2026-06-26T15:00:00+00:00",
+                "risk_level": "yellow",
+                "act_status": "worktree_created",
+            },
+        ]
+        since = parse_iso_datetime("2026-06-26T14:30:00Z")
+        filtered = filter_memory_entries(
+            entries=entries, risk_level="yellow", act_status="worktree_created", since=since
+        )
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["run_id"], "2")
 
     def test_build_retention_report_contains_candidates(self) -> None:
         now = datetime(2026, 6, 26, 14, 0, 0, tzinfo=timezone.utc)

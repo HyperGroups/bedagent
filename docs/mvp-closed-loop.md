@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.6.0-mvp (prototype)
-Status: implemented (retention report + full policy explain + weighted retrieval)
+Product Milestone: v0.7.0-mvp (prototype)
+Status: implemented (json report export + filtered retrieval + schema contract)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -65,6 +65,12 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    `memory-search` provides TF-IDF + cosine retrieval across recent journal entries.
 14. **Retention Report**  
    `worktree retention-report` previews cleanup candidates without deleting anything.
+15. **Retention Report Export**  
+   `worktree retention-report --output-json <path>` exports report for automation.
+16. **Retrieval Filters**  
+   `memory-search` supports `risk_level` / `act_status` / `since` filters.
+17. **Explain Schema Contract**  
+   run-level `policy_explain` now includes `schema_version`.
 
 ## Output contract
 
@@ -78,7 +84,7 @@ The manifest includes all stage outputs and is intended to be the seed contract
 for future protocol stabilization (`sage`, `action manifest`, `blanket`,
 `pillow_note`).
 
-## New v0.5 runtime options
+## New v0.7 runtime options
 
 ```bash
 python3 mvp/bedagent_mvp.py run \
@@ -105,6 +111,9 @@ Memory semantic search:
 python3 mvp/bedagent_mvp.py memory-search \
   --query "billing rollout plan" \
   --memory-journal .bedagent/memory/journal.ndjson \
+  --risk-level yellow \
+  --act-status worktree_created \
+  --since 2026-06-26T00:00:00Z \
   --limit 100 \
   --top-k 3
 ```
@@ -115,7 +124,7 @@ Worktree lifecycle commands:
 python3 mvp/bedagent_mvp.py worktree list --worktree-root .bedagent/worktrees
 python3 mvp/bedagent_mvp.py worktree cleanup --run-id <run_id> --allow-side-effects --force
 python3 mvp/bedagent_mvp.py worktree cleanup --apply-retention --blanket-policy mvp/blanket_policy.json --allow-side-effects --force
-python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blanket_policy.json --worktree-root .bedagent/worktrees
+python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blanket_policy.json --worktree-root .bedagent/worktrees --output-json .bedagent/reports/retention-report.json
 ```
 
 ## Current limitations
@@ -123,11 +132,11 @@ python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blank
 - No speech input/output yet.
 - No external model API; stage reasoning is heuristic.
 - No container executor yet; live execution currently focuses on git worktree path.
-- Memory retrieval is weighted lexical-semantic (TF-IDF); no embedding/rerank pipeline yet.
+- Memory retrieval is weighted lexical-semantic (TF-IDF) with pre-filters; no embedding/rerank pipeline yet.
 
 ## Next implementation steps
 
 1. Add embedding-backed retrieval and rerank for memory search.
-2. Add scheduled/automatic retention enforcement using existing report path.
+2. Add scheduled/automatic retention enforcement using existing report/export path.
 3. Add container/VM adapters behind the same side-effect gate.
 4. Add voice adapter as optional input/output layer.

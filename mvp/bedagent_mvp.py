@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+POLICY_EXPLAIN_SCHEMA_VERSION = "1.0.0"
+
 
 DEFAULT_RED_KEYWORDS = {
     "delete",
@@ -406,7 +408,11 @@ def build_policy_explain_chain(
     act_policy = act.get("policy_explain")
     if act_policy:
         gates.append({"gate": "act-live-policy", "checks": act_policy.get("checks", [])})
-    return {"final_status": act.get("status"), "gates": gates}
+    return {
+        "schema_version": POLICY_EXPLAIN_SCHEMA_VERSION,
+        "final_status": act.get("status"),
+        "gates": gates,
+    }
 
 
 def act_with_worktree_live_adapter(
@@ -849,6 +855,38 @@ def build_retention_report(
     }
 
 
+def parse_iso_datetime(value: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    dt = datetime.fromisoformat(normalized)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def filter_memory_entries(
+    entries: list[dict[str, Any]],
+    risk_level: str | None,
+    act_status: str | None,
+    since: datetime | None,
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for entry in entries:
+        if risk_level and str(entry.get("risk_level", "")) != risk_level:
+            continue
+        if act_status and str(entry.get("act_status", "")) != act_status:
+            continue
+        if since:
+            recorded_at = str(entry.get("recorded_at", ""))
+            try:
+                recorded_dt = parse_iso_datetime(recorded_at)
+            except ValueError:
+                continue
+            if recorded_dt < since:
+                continue
+        filtered.append(entry)
+    return filtered
+
+
 def remove_worktree(repo_root: Path, worktree_path: Path, force: bool) -> tuple[int, str, str]:
     command = ["git", "-C", str(repo_root), "worktree", "remove"]
     if force:
@@ -1024,12 +1062,25 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="number of results to return",
     )
+    memory_search.add_argument(
+        "--risk-level",
+        choices=["green", "yellow", "red"],
+        help="filter entries by risk level before retrieval",
+    )
+    memory_search.add_argument(
+        "--act-status",
+        help="filter entries by act_status before retrieval",
+    )
+    memory_search.add_argument(
+        "--since",
+        help="only include entries recorded at/after this ISO timestamp",
+    )
 
     worktree = sub.add_parser("worktree", help="manage bedagent-managed worktrees")
     worktree.add_argument(
         "action",
         choices=["list", "cleanup", "retention-report"],
-        help="list or cleanup managed worktrees",
+        help="list, cleanup, or retention-report for managed worktrees",
     )
     worktree.add_argument(
         "--git-repo-root",
@@ -1070,6 +1121,10 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="cleanup by retention policy (uses TTL and max_keep from blanket policy)",
     )
+    worktree.add_argument(
+        "--output-json",
+        help="optional path to write retention report JSON (retention-report action)",
+    )
 
     return parser.parse_args()
 
@@ -1105,11 +1160,24 @@ def main() -> int:
 
     if args.command == "memory-search":
         entries = read_memory_entries(Path(args.memory_journal), limit=max(1, args.limit))
+        since_dt = parse_iso_datetime(args.since) if args.since else None
+        entries = filter_memory_entries(
+            entries=entries,
+            risk_level=args.risk_level,
+            act_status=args.act_status,
+            since=since_dt,
+        )
         hits = semantic_memory_search(entries=entries, query=args.query, top_k=max(1, args.top_k))
         print("")
         print("=== bedagent memory semantic search ===")
         print(f"journal: {args.memory_journal}")
         print(f"query: {args.query}")
+        print(
+            "filters: "
+            f"risk={args.risk_level or '-'} "
+            f"status={args.act_status or '-'} "
+            f"since={args.since or '-'}"
+        )
         print(f"scanned: {len(entries)}")
         print(f"returned: {len(hits)}")
         for idx, hit in enumerate(hits, start=1):
@@ -1203,6 +1271,14 @@ def main() -> int:
                     f"- candidate: {item['path']} "
                     f"(ttl_expired={reason['ttl_expired']}, over_max_keep={reason['over_max_keep']})"
                 )
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"report_json: {output_path}")
             return 0
 
         raise ValueError(f"Unsupported worktree action: {args.action}")

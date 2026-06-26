@@ -458,3 +458,34 @@ product_milestone: v0.6.0-mvp
 - retention-report 仅输出，不做副作用；
 - explain 先聚焦 run 闭环，不覆盖所有子命令；
 - retrieval 仍是本地无依赖实现，不引入外部向量库。
+
+## ADR-0015：引入 retention-report 导出、检索过滤器、explain schema 版本
+
+```yaml
+date: 2026-06-26
+design_version: D0.1
+status: accepted
+product_milestone: v0.7.0-mvp
+```
+
+### 决策
+
+在 v0.6.0-mvp 基础上推进：
+
+1. `worktree retention-report` 支持 `--output-json`；
+2. `memory-search` 增加 `risk_level / act_status / since` 过滤器；
+3. run-level `policy_explain` 增加 `schema_version`。
+
+### 原因
+
+要从“可用”进一步走向“可集成 + 可演化”：
+
+- 导出能力让治理报告可以进入自动化流程；
+- 过滤器让记忆检索更接近真实调试场景；
+- schema version 让 explain 结构迭代可控。
+
+### 边界
+
+- 输出 JSON 先只覆盖 retention-report；
+- 过滤器是前置筛选，不是语义排序替代；
+- schema version 先版本化 explain，不代表整个 manifest 已版本化。
