@@ -388,6 +388,27 @@ def evaluate_live_policy(
     return {"allowed": allowed, "checks": checks, "blocked_keywords": hit}
 
 
+def build_policy_explain_chain(
+    blanket: dict[str, Any], confirm: dict[str, Any], act: dict[str, Any]
+) -> dict[str, Any]:
+    gates = [
+        {
+            "gate": "blanket",
+            "risk_level": blanket.get("risk_level"),
+            "requires_confirmation": blanket.get("requires_confirmation"),
+        },
+        {
+            "gate": "confirm",
+            "approved": confirm.get("approved"),
+            "mode": confirm.get("mode"),
+        },
+    ]
+    act_policy = act.get("policy_explain")
+    if act_policy:
+        gates.append({"gate": "act-live-policy", "checks": act_policy.get("checks", [])})
+    return {"final_status": act.get("status"), "gates": gates}
+
+
 def act_with_worktree_live_adapter(
     hands_dir: Path,
     repo_root: Path,
@@ -704,15 +725,32 @@ def cosine_similarity(left: dict[str, float], right: dict[str, float]) -> float:
 def semantic_memory_search(entries: list[dict[str, Any]], query: str, top_k: int) -> list[dict[str, Any]]:
     if not entries:
         return []
-    docs = [tokenize_text(str(entry.get("idea", "")) + " " + str(entry.get("pillow_note", ""))) for entry in entries]
+    field_weights = {
+        "idea": 0.65,
+        "pillow_note": 0.25,
+        "act_status": 0.05,
+        "risk_level": 0.05,
+    }
+    docs = {
+        field: [tokenize_text(str(entry.get(field, ""))) for entry in entries]
+        for field in field_weights
+    }
     query_tokens = tokenize_text(query)
-    idf = compute_idf(docs + [query_tokens])
+    all_tokens = [query_tokens]
+    for field in field_weights:
+        all_tokens.extend(docs[field])
+    idf = compute_idf(all_tokens)
     qvec = vectorize(query_tokens, idf)
     ranked = []
-    for entry, tokens in zip(entries, docs):
-        dvec = vectorize(tokens, idf)
-        score = cosine_similarity(qvec, dvec)
-        ranked.append({"score": round(score, 6), "entry": entry})
+    for idx, entry in enumerate(entries):
+        score = 0.0
+        detail = {}
+        for field, weight in field_weights.items():
+            dvec = vectorize(docs[field][idx], idf)
+            part = cosine_similarity(qvec, dvec)
+            detail[field] = round(part, 6)
+            score += weight * part
+        ranked.append({"score": round(score, 6), "entry": entry, "detail": detail})
     ranked.sort(key=lambda item: item["score"], reverse=True)
     return ranked[: max(1, top_k)]
 
@@ -792,6 +830,25 @@ def select_worktree_cleanup_candidates(
     return sorted(candidates, key=lambda item: item["run_dt"])
 
 
+def build_retention_report(
+    items: list[dict[str, Any]], policy: dict[str, Any], now: datetime
+) -> dict[str, Any]:
+    retention = policy["worktree_retention"]
+    candidates = select_worktree_cleanup_candidates(
+        items=items,
+        now=now,
+        ttl_hours=int(retention["ttl_hours"]),
+        max_keep=int(retention["max_keep"]),
+    )
+    return {
+        "ttl_hours": int(retention["ttl_hours"]),
+        "max_keep": int(retention["max_keep"]),
+        "total_items": len(items),
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+    }
+
+
 def remove_worktree(repo_root: Path, worktree_path: Path, force: bool) -> tuple[int, str, str]:
     command = ["git", "-C", str(repo_root), "worktree", "remove"]
     if force:
@@ -844,6 +901,7 @@ def run_closed_loop(
         report=report,
         act=act,
     )
+    policy_explain = build_policy_explain_chain(blanket=blanket, confirm=confirm, act=act)
 
     manifest = {
         "run_id": run_id,
@@ -869,6 +927,7 @@ def run_closed_loop(
         "act": act,
         "report": report,
         "memory": memory,
+        "policy_explain": policy_explain,
     }
     write_json(run_dir / "manifest.json", manifest)
     return manifest
@@ -969,7 +1028,7 @@ def parse_args() -> argparse.Namespace:
     worktree = sub.add_parser("worktree", help="manage bedagent-managed worktrees")
     worktree.add_argument(
         "action",
-        choices=["list", "cleanup"],
+        choices=["list", "cleanup", "retention-report"],
         help="list or cleanup managed worktrees",
     )
     worktree.add_argument(
@@ -1060,6 +1119,9 @@ def main() -> int:
                 f" risk={entry.get('risk_level', '-')} status={entry.get('act_status', '-')}"
             )
             print(f"   idea: {entry.get('idea', '-')}")
+            detail = hit.get("detail", {})
+            if detail:
+                print(f"   detail: {json.dumps(detail, ensure_ascii=False)}")
         return 0
 
     if args.command == "worktree":
@@ -1127,6 +1189,21 @@ def main() -> int:
             for item in failed:
                 print(f"- failed: {item['path']} ({item['stderr'] or 'unknown error'})")
             return 0 if not failed else 1
+
+        if args.action == "retention-report":
+            items = list_managed_worktrees(worktree_root)
+            report = build_retention_report(items=items, policy=policy, now=datetime.now(timezone.utc))
+            print("")
+            print("=== bedagent worktree retention report ===")
+            print(f"ttl_hours={report['ttl_hours']} max_keep={report['max_keep']}")
+            print(f"total_items={report['total_items']} candidate_count={report['candidate_count']}")
+            for item in report["candidates"]:
+                reason = item["cleanup_reason"]
+                print(
+                    f"- candidate: {item['path']} "
+                    f"(ttl_expired={reason['ttl_expired']}, over_max_keep={reason['over_max_keep']})"
+                )
+            return 0
 
         raise ValueError(f"Unsupported worktree action: {args.action}")
 

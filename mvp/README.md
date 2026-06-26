@@ -18,6 +18,7 @@ This MVP turns the design into a runnable local controller with:
 - append-only memory journal;
 - memory recap command for quick bedside review;
 - memory semantic search command for retrieving similar prior runs;
+- policy explain chain in run manifest (Blanket -> Confirm -> Act);
 - one-line short report (`pillow_note`).
 
 ## Quick start
@@ -90,6 +91,14 @@ python3 mvp/bedagent_mvp.py worktree cleanup \
   --force
 ```
 
+Retention dry-run report (no deletion):
+
+```bash
+python3 mvp/bedagent_mvp.py worktree retention-report \
+  --blanket-policy mvp/blanket_policy.json \
+  --worktree-root .bedagent/worktrees
+```
+
 ## Key runtime flags
 
 - `--blanket-policy`: blanket policy JSON file path.
@@ -99,7 +108,7 @@ python3 mvp/bedagent_mvp.py worktree cleanup \
 - `--allow-side-effects`: required for `worktree-live`.
 - `worktree` subcommand: lifecycle operations (`list`, `cleanup`) with optional policy retention cleanup.
 - `recap` subcommand: memory playback with topic/status summary.
-- `memory-search` subcommand: TF-IDF cosine retrieval over recent journal entries.
+- `memory-search` subcommand: weighted multi-field TF-IDF cosine retrieval over recent journal entries.
 
 ## Output artifacts
 
@@ -127,5 +136,6 @@ When execution is approved, the sandbox subfolder also includes:
 - `worktree-live` is blocked unless `--allow-side-effects` is explicitly set.
 - `worktree-live` is also gated by blanket policy risk/keyword rules.
 - `worktree cleanup --apply-retention` uses `worktree_retention.ttl_hours` and `max_keep`.
+- `worktree retention-report` previews retention cleanup without side effects.
 - High-risk ideas require stronger explicit confirmation (`YES`) in interactive mode.
 - `--auto-confirm` does not bypass red-risk policy when `allow_auto_confirm_red` is `false`.

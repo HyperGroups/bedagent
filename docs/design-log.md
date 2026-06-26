@@ -427,3 +427,34 @@ product_milestone: v0.5.0-mvp
 - retention 仍通过显式命令触发，不做后台自动任务；
 - semantic search 仍是轻量 lexical 方案，不依赖外部模型；
 - policy explain 先覆盖 live adapter，不代表全链路解释器已完成。
+
+## ADR-0014：补齐 retention dry-run 报告与运行期全链路 explain 输出
+
+```yaml
+date: 2026-06-26
+design_version: D0.1
+status: accepted
+product_milestone: v0.6.0-mvp
+```
+
+### 决策
+
+在 v0.5.0-mvp 上补齐三点：
+
+1. 增加 `worktree retention-report`（只报告候选，不执行删除）；
+2. 每次 run 在 manifest 输出 `policy_explain` 链路（Blanket -> Confirm -> Act）；
+3. `memory-search` 由单字段拼接改为多字段加权检索（idea/pillow/status/risk）。
+
+### 原因
+
+推进到 v0.6 后，需要同时满足“可审阅、可解释、可回忆”：
+
+- retention 的治理动作要先可预览；
+- 执行前后的策略判断要可追踪；
+- 记忆检索要避免被单一字段主导。
+
+### 边界
+
+- retention-report 仅输出，不做副作用；
+- explain 先聚焦 run 闭环，不覆盖所有子命令；
+- retrieval 仍是本地无依赖实现，不引入外部向量库。

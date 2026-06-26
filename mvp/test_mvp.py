@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bedagent_mvp import (
+    build_retention_report,
     build_recap,
     build_run_id,
     evaluate_live_policy,
@@ -64,6 +65,7 @@ class BedagentMvpTests(unittest.TestCase):
             self.assertTrue((run_dir / "manifest.json").exists())
             payload = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertIn("report", payload)
+            self.assertIn("policy_explain", payload)
 
     def test_worktree_dry_run_generates_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -222,6 +224,33 @@ class BedagentMvpTests(unittest.TestCase):
         paths = {item["path"] for item in candidates}
         self.assertIn("/tmp/w2", paths)
         self.assertIn("/tmp/w3", paths)
+
+    def test_build_retention_report_contains_candidates(self) -> None:
+        now = datetime(2026, 6, 26, 14, 0, 0, tzinfo=timezone.utc)
+        policy = {"worktree_retention": {"ttl_hours": 1, "max_keep": 1}}
+        items = [
+            {"run_id": "20260626T135900.000000Z-aaaaaa", "path": "/tmp/w1", "mtime_epoch": now.timestamp()},
+            {"run_id": "20260626T120000.000000Z-bbbbbb", "path": "/tmp/w2", "mtime_epoch": now.timestamp() - 7200},
+        ]
+        report = build_retention_report(items=items, policy=policy, now=now)
+        self.assertEqual(report["candidate_count"], 1)
+        self.assertEqual(report["candidates"][0]["path"], "/tmp/w2")
+
+    def test_policy_explain_chain_includes_act_live_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = self.run_with_defaults(
+                tmp,
+                idea="Prepare docs branch plan.",
+                auto_confirm=True,
+                non_interactive=False,
+                sandbox_adapter="worktree-live",
+                allow_side_effects=False,
+            )
+            explain = manifest["policy_explain"]
+            gates = [item["gate"] for item in explain["gates"]]
+            self.assertIn("blanket", gates)
+            self.assertIn("confirm", gates)
+            self.assertIn("act-live-policy", gates)
 
 
 if __name__ == "__main__":
