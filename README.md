@@ -125,7 +125,7 @@ site/                               # 静态 GitHub Pages 站点
 https://hypergroups.github.io/bedagent/
 ```
 
-合并到 `main` 后，GitHub Actions 会把 `site/` 发布到 GitHub Pages。如果页面 404，优先检查仓库 Settings → Pages 是否启用了 GitHub Actions 作为发布源。
+合并到 `main` 后，GitHub Actions 会把 `site/` 发布到 `gh-pages` 分支，GitHub Pages 再从 `gh-pages` 分支根目录构建。如果页面 404，优先检查仓库 Settings → Pages 是否启用了 `gh-pages` 分支源。
 
 ## 文档
 
