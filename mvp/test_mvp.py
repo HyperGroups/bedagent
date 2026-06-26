@@ -33,7 +33,9 @@ class BedagentMvpTests(unittest.TestCase):
 
     def test_non_interactive_denies_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            manifest = self.run_with_defaults(tmp)
+            manifest = self.run_with_defaults(
+                tmp, idea="Update design note for better report format."
+            )
             self.assertFalse(manifest["confirm"]["approved"])
             self.assertEqual(manifest["act"]["status"], "skipped")
             self.assertTrue(manifest["memory"]["entry_appended"])
