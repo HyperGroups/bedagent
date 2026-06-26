@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.2.0-mvp (prototype)
-Status: implemented (local prototype + policy/adapter/memory)
+Product Milestone: v0.3.0-mvp (prototype)
+Status: implemented (policy + adapter + memory + recap + side-effect gate)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -52,6 +52,7 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    Uses pluggable adapters:
    - `simulated`
    - `worktree-dry-run` (generate plan only, no git side effect)
+   - `worktree-live` (real `git worktree add`, blocked unless explicit side-effect flag)
 9. **Short Report**  
    Produces one sentence `pillow_note`.
 10. **Memory**  
@@ -69,30 +70,37 @@ The manifest includes all stage outputs and is intended to be the seed contract
 for future protocol stabilization (`sage`, `action manifest`, `blanket`,
 `pillow_note`).
 
-## New v0.2 runtime options
+## New v0.3 runtime options
 
 ```bash
 python3 mvp/bedagent_mvp.py run \
   --idea "Prepare safe branch execution plan" \
   --blanket-policy mvp/blanket_policy.json \
-  --sandbox-adapter worktree-dry-run \
+  --sandbox-adapter worktree-live \
   --memory-journal .bedagent/memory/journal.ndjson \
   --git-repo-root . \
+  --allow-side-effects \
   --auto-confirm
 ```
 
 `--auto-confirm` is still constrained by blanket policy (`allow_auto_confirm_red`).
 
+Memory recap command:
+
+```bash
+python3 mvp/bedagent_mvp.py recap --memory-journal .bedagent/memory/journal.ndjson --limit 5
+```
+
 ## Current limitations
 
 - No speech input/output yet.
 - No external model API; stage reasoning is heuristic.
-- No real command execution yet; Hands is simulated or dry-run planned.
-- Memory is append-only journaling; no retrieval/ranking yet.
+- No container executor yet; live execution currently only covers git worktree creation path.
+- Memory has recap/tail view; no semantic retrieval/ranking yet.
 
 ## Next implementation steps
 
-1. Add deterministic `blanket` enforcement tests for custom policy overrides.
-2. Add real worktree executor behind explicit `--allow-side-effects` gate.
-3. Add memory reader for recap/prior-run suggestions.
+1. Add cleanup policy for stale worktrees created by `worktree-live`.
+2. Add semantic memory retrieval/rerank for prior-run suggestions.
+3. Add container/VM adapters behind the same side-effect gate.
 4. Add voice adapter as optional input/output layer.

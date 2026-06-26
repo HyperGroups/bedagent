@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""bedagent MVP: minimal closed-loop controller prototype.
-
-Flow:
-Capture -> Sage -> Focus -> Think -> Plan -> Confirm -> Act Sandbox -> Report
-"""
+"""bedagent MVP: minimal closed-loop controller prototype."""
 
 from __future__ import annotations
 
@@ -230,12 +226,13 @@ def stage_blanket(plan: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any
 
 
 def stage_confirm(
-    plan: dict[str, Any],
     blanket: dict[str, Any],
     auto_confirm: bool,
     non_interactive: bool,
 ) -> dict[str, Any]:
     risk_level = blanket["risk_level"]
+    if not blanket["requires_confirmation"]:
+        return {"approved": True, "mode": "policy_no_confirmation", "risk_level": risk_level}
     if auto_confirm:
         if risk_level == "red" and not blanket["allow_auto_confirm_red"]:
             return {
@@ -345,12 +342,112 @@ def act_with_worktree_dry_run_adapter(
     }
 
 
+def run_command(command: list[str]) -> tuple[int, str, str]:
+    proc = subprocess.run(command, capture_output=True, text=True)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def act_with_worktree_live_adapter(
+    hands_dir: Path,
+    repo_root: Path,
+    run_id: str,
+    plan: dict[str, Any],
+    allow_side_effects: bool,
+) -> dict[str, Any]:
+    if not allow_side_effects:
+        return {
+            "status": "policy_blocked_side_effects",
+            "adapter": "worktree-live",
+            "reason": "use --allow-side-effects to enable real worktree execution",
+        }
+
+    git_ctx = detect_git_context(repo_root)
+    if not git_ctx:
+        return {
+            "status": "adapter_error",
+            "adapter": "worktree-live",
+            "reason": f"'{repo_root}' is not a git repository",
+        }
+
+    target_branch = f"bedagent/run-{run_id.replace('.', '-').lower()}"
+    worktree_dir = Path(git_ctx["repo_root"]) / ".bedagent" / "worktrees" / run_id
+    worktree_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    add_cmd = [
+        "git",
+        "-C",
+        git_ctx["repo_root"],
+        "worktree",
+        "add",
+        "-b",
+        target_branch,
+        str(worktree_dir),
+        git_ctx["branch"],
+    ]
+    add_code, add_out, add_err = run_command(add_cmd)
+
+    transcript = [
+        "# Worktree live adapter transcript",
+        "",
+        f"- repo_root: {git_ctx['repo_root']}",
+        f"- source_branch: {git_ctx['branch']}",
+        f"- target_branch: {target_branch}",
+        f"- worktree_path: {worktree_dir}",
+        "",
+        "## command",
+        "```bash",
+        " ".join(add_cmd),
+        "```",
+        "",
+        f"exit_code: {add_code}",
+        "",
+        "### stdout",
+        "```text",
+        add_out.rstrip(),
+        "```",
+        "",
+        "### stderr",
+        "```text",
+        add_err.rstrip(),
+        "```",
+        "",
+        "## Planned tasks",
+    ]
+    for task in plan["tasks"]:
+        transcript.append(f"- [ ] {task['id']}: {task['title']}")
+    (hands_dir / "WORKTREE_LIVE_TRANSCRIPT.md").write_text("\n".join(transcript), encoding="utf-8")
+
+    if add_code != 0:
+        return {
+            "status": "adapter_error",
+            "adapter": "worktree-live",
+            "reason": "git worktree add failed",
+            "target_branch": target_branch,
+            "worktree_path": str(worktree_dir),
+            "transcript_path": str(hands_dir / "WORKTREE_LIVE_TRANSCRIPT.md"),
+        }
+
+    status_cmd = ["git", "-C", str(worktree_dir), "status", "--short", "--branch"]
+    status_code, status_out, status_err = run_command(status_cmd)
+    return {
+        "status": "worktree_created",
+        "adapter": "worktree-live",
+        "target_branch": target_branch,
+        "worktree_path": str(worktree_dir),
+        "status_command_exit_code": status_code,
+        "status_output": status_out.strip(),
+        "status_error": status_err.strip(),
+        "transcript_path": str(hands_dir / "WORKTREE_LIVE_TRANSCRIPT.md"),
+    }
+
+
 def stage_act(
     ctx: RunContext,
     plan: dict[str, Any],
     confirm: dict[str, Any],
     sandbox_adapter: str,
     git_repo_root: Path,
+    allow_side_effects: bool,
 ) -> dict[str, Any]:
     hands_dir = ctx.run_dir / "hands"
     hands_dir.mkdir(parents=True, exist_ok=True)
@@ -368,6 +465,14 @@ def stage_act(
         result = act_with_worktree_dry_run_adapter(
             hands_dir=hands_dir, repo_root=git_repo_root, run_id=ctx.run_id, plan=plan
         )
+    elif sandbox_adapter == "worktree-live":
+        result = act_with_worktree_live_adapter(
+            hands_dir=hands_dir,
+            repo_root=git_repo_root,
+            run_id=ctx.run_id,
+            plan=plan,
+            allow_side_effects=allow_side_effects,
+        )
     else:
         result = {"status": "adapter_error", "adapter": sandbox_adapter, "reason": "unknown adapter"}
     result["sandbox_path"] = str(hands_dir)
@@ -379,6 +484,10 @@ def stage_report(act: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
         sentence = "Closed loop completed: plan approved, sandbox execution simulated, report delivered."
     elif act["status"] == "dry_run_ready":
         sentence = "Closed loop completed: plan approved, worktree dry-run plan generated."
+    elif act["status"] == "worktree_created":
+        sentence = "Closed loop completed: plan approved, worktree was created with side effects enabled."
+    elif act["status"] == "policy_blocked_side_effects":
+        sentence = "Closed loop paused: side effects are blocked without explicit allow-side-effects."
     else:
         sentence = "Closed loop paused: waiting for explicit execution approval."
     return {"pillow_note": sentence, "risk_level": plan["risk"]["level"]}
@@ -431,6 +540,35 @@ def stage_memory(
     return result
 
 
+def read_memory_entries(journal_path: Path, limit: int) -> list[dict[str, Any]]:
+    if not journal_path.exists():
+        return []
+    lines = [line for line in journal_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    entries: list[dict[str, Any]] = []
+    for raw in lines[-limit:]:
+        try:
+            entries.append(json.loads(raw))
+        except json.JSONDecodeError:
+            continue
+    return entries
+
+
+def build_recap(journal_path: Path, limit: int) -> dict[str, Any]:
+    entries = read_memory_entries(journal_path, limit=limit)
+    by_risk: dict[str, int] = {"green": 0, "yellow": 0, "red": 0}
+    for entry in entries:
+        risk = entry.get("risk_level", "unknown")
+        by_risk[risk] = by_risk.get(risk, 0) + 1
+    latest = entries[-1] if entries else None
+    return {
+        "journal_path": str(journal_path),
+        "total_loaded": len(entries),
+        "risk_breakdown": by_risk,
+        "latest": latest,
+        "recent": entries,
+    }
+
+
 def run_closed_loop(
     idea: str,
     output_root: Path,
@@ -440,6 +578,7 @@ def run_closed_loop(
     sandbox_adapter: str,
     memory_journal_path: Path,
     git_repo_root: Path,
+    allow_side_effects: bool,
 ) -> dict[str, Any]:
     run_id = build_run_id()
     run_dir = output_root / run_id
@@ -454,7 +593,7 @@ def run_closed_loop(
     plan = stage_plan(sage, think)
     blanket = stage_blanket(plan, policy)
     confirm = stage_confirm(
-        plan, blanket=blanket, auto_confirm=auto_confirm, non_interactive=non_interactive
+        blanket=blanket, auto_confirm=auto_confirm, non_interactive=non_interactive
     )
     act = stage_act(
         ctx,
@@ -462,6 +601,7 @@ def run_closed_loop(
         confirm,
         sandbox_adapter=sandbox_adapter,
         git_repo_root=git_repo_root,
+        allow_side_effects=allow_side_effects,
     )
     report = stage_report(act, plan)
     memory = stage_memory(
@@ -539,7 +679,7 @@ def parse_args() -> argparse.Namespace:
     )
     run.add_argument(
         "--sandbox-adapter",
-        choices=["simulated", "worktree-dry-run"],
+        choices=["simulated", "worktree-dry-run", "worktree-live"],
         default="simulated",
         help="sandbox adapter for Act stage",
     )
@@ -552,6 +692,24 @@ def parse_args() -> argparse.Namespace:
         "--git-repo-root",
         default=".",
         help="repository root path for worktree-dry-run adapter",
+    )
+    run.add_argument(
+        "--allow-side-effects",
+        action="store_true",
+        help="allow side effects for adapters that mutate git state (e.g. worktree-live)",
+    )
+
+    recap = sub.add_parser("recap", help="show memory recap from journal")
+    recap.add_argument(
+        "--memory-journal",
+        default=".bedagent/memory/journal.ndjson",
+        help="append-only memory journal path",
+    )
+    recap.add_argument(
+        "--limit",
+        default=5,
+        type=int,
+        help="number of recent entries to include",
     )
 
     return parser.parse_args()
@@ -568,6 +726,21 @@ def load_idea(args: argparse.Namespace) -> str:
 
 def main() -> int:
     args = parse_args()
+    if args.command == "recap":
+        recap = build_recap(Path(args.memory_journal), limit=max(1, args.limit))
+        print("")
+        print("=== bedagent memory recap ===")
+        print(f"journal: {recap['journal_path']}")
+        print(f"loaded: {recap['total_loaded']}")
+        print(f"risk_breakdown: {json.dumps(recap['risk_breakdown'], ensure_ascii=False)}")
+        latest = recap["latest"]
+        if latest:
+            print(f"latest_run: {latest.get('run_id', '-')}")
+            print(f"latest_note: {latest.get('pillow_note', '-')}")
+        else:
+            print("latest_run: none")
+        return 0
+
     if args.command != "run":
         raise ValueError(f"Unsupported command: {args.command}")
 
@@ -586,6 +759,7 @@ def main() -> int:
         sandbox_adapter=args.sandbox_adapter,
         memory_journal_path=Path(args.memory_journal),
         git_repo_root=Path(args.git_repo_root),
+        allow_side_effects=args.allow_side_effects,
     )
 
     print("")

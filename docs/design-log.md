@@ -334,3 +334,31 @@ product_milestone: v0.2.0-mvp
 - `worktree-dry-run` 只生成执行计划，不直接执行 git 命令；
 - memory 目前只追加，不做检索、合并、总结；
 - 仍然保持“默认保守”，避免真实副作用。
+
+## ADR-0011：增加 Memory Recap 与显式 Side-effect Gate 的 worktree-live 执行器
+
+```yaml
+date: 2026-06-26
+design_version: D0.1
+status: accepted
+product_milestone: v0.3.0-mvp
+```
+
+### 决策
+
+在 v0.2.0-mvp 基础上新增：
+
+1. `recap` 子命令，用于读取 memory journal 的最近记录；
+2. `worktree-live` adapter，可执行真实 `git worktree add`；
+3. `--allow-side-effects` 显式开关，默认不允许副作用；
+4. 自定义 blanket policy 覆盖测试，确保策略对确认逻辑生效。
+
+### 原因
+
+“全面推进”阶段不仅要有“记录”，还要有“回看”；不仅要有“适配器边界”，还要有“受控真实执行路径”。
+
+### 边界
+
+- `worktree-live` 只覆盖 worktree 创建，不做自动提交/推送；
+- 未显式传入 `--allow-side-effects` 时，live 执行必须阻断；
+- recap 只做结构化回放，不做语义摘要或检索增强。

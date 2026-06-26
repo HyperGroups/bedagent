@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bedagent_mvp import build_run_id, run_closed_loop
+from bedagent_mvp import build_recap, build_run_id, run_closed_loop
 
 
 class BedagentMvpTests(unittest.TestCase):
@@ -23,6 +23,7 @@ class BedagentMvpTests(unittest.TestCase):
             sandbox_adapter=kwargs.get("sandbox_adapter", "simulated"),
             memory_journal_path=Path(kwargs.get("memory_journal_path", Path(tmp) / "journal.ndjson")),
             git_repo_root=Path(kwargs.get("git_repo_root", ".")),
+            allow_side_effects=kwargs.get("allow_side_effects", False),
         )
 
     def test_build_run_id_is_unique(self) -> None:
@@ -71,6 +72,64 @@ class BedagentMvpTests(unittest.TestCase):
             )
             run_dir = out / manifest["run_id"]
             self.assertTrue((run_dir / "manifest.json").exists())
+
+    def test_worktree_live_requires_side_effect_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = self.run_with_defaults(
+                tmp,
+                idea="Prepare branch execution for docs update.",
+                auto_confirm=True,
+                non_interactive=False,
+                sandbox_adapter="worktree-live",
+                allow_side_effects=False,
+            )
+            self.assertEqual(manifest["act"]["status"], "policy_blocked_side_effects")
+
+    def test_custom_policy_can_block_auto_confirm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            policy_path = Path(tmp) / "policy.json"
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "red_keywords": ["docs"],
+                        "yellow_keywords": [],
+                        "allow_auto_confirm_red": False,
+                        "require_confirmation_by_risk": {"green": False, "yellow": True, "red": True},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest = self.run_with_defaults(
+                tmp,
+                idea="Update docs for new rollout plan.",
+                auto_confirm=True,
+                non_interactive=False,
+                blanket_policy_path=policy_path,
+            )
+            self.assertFalse(manifest["confirm"]["approved"])
+            self.assertEqual(manifest["confirm"]["mode"], "policy_blocked_auto_confirm_red")
+
+    def test_memory_recap_reads_recent_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = Path(tmp) / "journal.ndjson"
+            self.run_with_defaults(
+                tmp,
+                idea="Update docs and notes.",
+                auto_confirm=True,
+                non_interactive=False,
+                memory_journal_path=journal,
+            )
+            self.run_with_defaults(
+                tmp,
+                idea="Prepare safe branch execution plan.",
+                auto_confirm=True,
+                non_interactive=False,
+                sandbox_adapter="worktree-dry-run",
+                memory_journal_path=journal,
+            )
+            recap = build_recap(journal_path=journal, limit=5)
+            self.assertEqual(recap["total_loaded"], 2)
+            self.assertIsNotNone(recap["latest"])
 
 
 if __name__ == "__main__":
