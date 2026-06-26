@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.5.0-mvp (prototype)
-Status: implemented (policy + adapter + recap + semantic memory + retention)
+Product Milestone: v0.8.0-mvp (prototype)
+Status: implemented (validator + filtered governance views + retrieval controls)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -63,6 +63,16 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    `worktree-live` now records a check tree (risk gate, keyword gate, side-effect gate).
 13. **Memory Retrieval**  
    `memory-search` provides TF-IDF + cosine retrieval across recent journal entries.
+14. **Retention Report**  
+   `worktree retention-report` previews cleanup candidates without deleting anything.
+15. **Retention Report Export**  
+   `worktree retention-report --output-json <path>` exports report for automation.
+16. **Retrieval Filters**  
+   `memory-search` supports `risk_level` / `act_status` / `since` filters.
+17. **Explain Schema Contract**  
+   run-level `policy_explain` now includes `schema_version`.
+18. **Explain Validator**  
+   `validate-explain` validates schema version and required fields in manifest.
 
 ## Output contract
 
@@ -76,7 +86,7 @@ The manifest includes all stage outputs and is intended to be the seed contract
 for future protocol stabilization (`sage`, `action manifest`, `blanket`,
 `pillow_note`).
 
-## New v0.5 runtime options
+## New v0.7 runtime options
 
 ```bash
 python3 mvp/bedagent_mvp.py run \
@@ -103,16 +113,27 @@ Memory semantic search:
 python3 mvp/bedagent_mvp.py memory-search \
   --query "billing rollout plan" \
   --memory-journal .bedagent/memory/journal.ndjson \
+  --risk-level yellow \
+  --act-status worktree_created \
+  --since 2026-06-26T00:00:00Z \
+  --min-score 0.2 \
+  --explain \
   --limit 100 \
   --top-k 3
+
+python3 mvp/bedagent_mvp.py validate-explain \
+  --manifest /tmp/bedagent-v07/20260626T150348.716111Z-1e51df/manifest.json \
+  --expected-schema 1.0.0
 ```
 
 Worktree lifecycle commands:
 
 ```bash
 python3 mvp/bedagent_mvp.py worktree list --worktree-root .bedagent/worktrees
+python3 mvp/bedagent_mvp.py worktree list --worktree-root .bedagent/worktrees --run-id-prefix 20260626T15 --since 2026-06-26T00:00:00Z
 python3 mvp/bedagent_mvp.py worktree cleanup --run-id <run_id> --allow-side-effects --force
 python3 mvp/bedagent_mvp.py worktree cleanup --apply-retention --blanket-policy mvp/blanket_policy.json --allow-side-effects --force
+python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blanket_policy.json --worktree-root .bedagent/worktrees --output-json .bedagent/reports/retention-report.json
 ```
 
 ## Current limitations
@@ -120,11 +141,11 @@ python3 mvp/bedagent_mvp.py worktree cleanup --apply-retention --blanket-policy 
 - No speech input/output yet.
 - No external model API; stage reasoning is heuristic.
 - No container executor yet; live execution currently focuses on git worktree path.
-- Memory retrieval is lexical-semantic (TF-IDF); no embedding/rerank pipeline yet.
+- Memory retrieval is weighted lexical-semantic (TF-IDF) with pre-filters; no embedding/rerank pipeline yet.
 
 ## Next implementation steps
 
-1. Add embedding-backed retrieval and multi-field rerank for memory search.
-2. Add scheduled/automatic retention enforcement with dry-run report mode.
+1. Add embedding-backed retrieval and rerank for memory search.
+2. Add scheduled/automatic retention enforcement using existing report/export path.
 3. Add container/VM adapters behind the same side-effect gate.
 4. Add voice adapter as optional input/output layer.

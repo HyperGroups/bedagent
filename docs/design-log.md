@@ -427,3 +427,96 @@ product_milestone: v0.5.0-mvp
 - retention 仍通过显式命令触发，不做后台自动任务；
 - semantic search 仍是轻量 lexical 方案，不依赖外部模型；
 - policy explain 先覆盖 live adapter，不代表全链路解释器已完成。
+
+## ADR-0014：补齐 retention dry-run 报告与运行期全链路 explain 输出
+
+```yaml
+date: 2026-06-26
+design_version: D0.1
+status: accepted
+product_milestone: v0.6.0-mvp
+```
+
+### 决策
+
+在 v0.5.0-mvp 上补齐三点：
+
+1. 增加 `worktree retention-report`（只报告候选，不执行删除）；
+2. 每次 run 在 manifest 输出 `policy_explain` 链路（Blanket -> Confirm -> Act）；
+3. `memory-search` 由单字段拼接改为多字段加权检索（idea/pillow/status/risk）。
+
+### 原因
+
+推进到 v0.6 后，需要同时满足“可审阅、可解释、可回忆”：
+
+- retention 的治理动作要先可预览；
+- 执行前后的策略判断要可追踪；
+- 记忆检索要避免被单一字段主导。
+
+### 边界
+
+- retention-report 仅输出，不做副作用；
+- explain 先聚焦 run 闭环，不覆盖所有子命令；
+- retrieval 仍是本地无依赖实现，不引入外部向量库。
+
+## ADR-0015：引入 retention-report 导出、检索过滤器、explain schema 版本
+
+```yaml
+date: 2026-06-26
+design_version: D0.1
+status: accepted
+product_milestone: v0.7.0-mvp
+```
+
+### 决策
+
+在 v0.6.0-mvp 基础上推进：
+
+1. `worktree retention-report` 支持 `--output-json`；
+2. `memory-search` 增加 `risk_level / act_status / since` 过滤器；
+3. run-level `policy_explain` 增加 `schema_version`。
+
+### 原因
+
+要从“可用”进一步走向“可集成 + 可演化”：
+
+- 导出能力让治理报告可以进入自动化流程；
+- 过滤器让记忆检索更接近真实调试场景；
+- schema version 让 explain 结构迭代可控。
+
+### 边界
+
+- 输出 JSON 先只覆盖 retention-report；
+- 过滤器是前置筛选，不是语义排序替代；
+- schema version 先版本化 explain，不代表整个 manifest 已版本化。
+
+## ADR-0016：新增 explain 校验器与 retention/report 过滤能力
+
+```yaml
+date: 2026-06-26
+design_version: D0.1
+status: accepted
+product_milestone: v0.8.0-mvp
+```
+
+### 决策
+
+在 v0.7.0-mvp 的基础上继续推进：
+
+1. `validate-explain` 子命令，校验 `policy_explain` 结构与 schema 版本；
+2. `worktree list` / `retention-report` 增加 `run_id_prefix/since/until` 过滤器；
+3. `memory-search` 增加 `--min-score` 阈值与 `--explain` 明细开关。
+
+### 原因
+
+为后续自动化集成做准备：
+
+- 校验器让 explain 合同具备机器验证能力；
+- 过滤器让治理/排障命令更精准；
+- 最小分数阈值与 explain 开关让检索结果更可控。
+
+### 边界
+
+- explain 校验仅针对 `policy_explain`；
+- worktree 过滤仅作用于 `list/retention-report`；
+- 检索仍为本地 TF-IDF，不引入外部检索服务。

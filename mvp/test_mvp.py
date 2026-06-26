@@ -5,13 +5,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bedagent_mvp import (
+    apply_min_score,
+    build_retention_report,
     build_recap,
     build_run_id,
     evaluate_live_policy,
+    filter_memory_entries,
+    filter_worktree_items,
     list_managed_worktrees,
+    parse_iso_datetime,
     run_closed_loop,
     select_worktree_cleanup_candidates,
     semantic_memory_search,
+    validate_policy_explain_contract,
 )
 
 
@@ -64,6 +70,8 @@ class BedagentMvpTests(unittest.TestCase):
             self.assertTrue((run_dir / "manifest.json").exists())
             payload = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertIn("report", payload)
+            self.assertIn("policy_explain", payload)
+            self.assertEqual(payload["policy_explain"]["schema_version"], "1.0.0")
 
     def test_worktree_dry_run_generates_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -198,6 +206,7 @@ class BedagentMvpTests(unittest.TestCase):
         hits = semantic_memory_search(entries=entries, query="billing plan", top_k=1)
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0]["entry"]["run_id"], "1")
+        self.assertIn("detail", hits[0])
 
     def test_select_worktree_cleanup_candidates_by_ttl_and_max_keep(self) -> None:
         now = datetime(2026, 6, 26, 14, 0, 0, tzinfo=timezone.utc)
@@ -222,6 +231,94 @@ class BedagentMvpTests(unittest.TestCase):
         paths = {item["path"] for item in candidates}
         self.assertIn("/tmp/w2", paths)
         self.assertIn("/tmp/w3", paths)
+
+    def test_filter_memory_entries_applies_risk_status_and_since(self) -> None:
+        entries = [
+            {
+                "run_id": "1",
+                "recorded_at": "2026-06-26T14:00:00+00:00",
+                "risk_level": "green",
+                "act_status": "simulated_success",
+            },
+            {
+                "run_id": "2",
+                "recorded_at": "2026-06-26T15:00:00+00:00",
+                "risk_level": "yellow",
+                "act_status": "worktree_created",
+            },
+        ]
+        since = parse_iso_datetime("2026-06-26T14:30:00Z")
+        filtered = filter_memory_entries(
+            entries=entries, risk_level="yellow", act_status="worktree_created", since=since
+        )
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["run_id"], "2")
+
+    def test_filter_worktree_items_by_prefix_and_time_range(self) -> None:
+        items = [
+            {
+                "run_id": "20260626T120000.000000Z-aaaaaa",
+                "path": "/tmp/a",
+                "mtime_epoch": datetime(2026, 6, 26, 12, 0, tzinfo=timezone.utc).timestamp(),
+            },
+            {
+                "run_id": "20260626T130000.000000Z-bbbbbb",
+                "path": "/tmp/b",
+                "mtime_epoch": datetime(2026, 6, 26, 13, 0, tzinfo=timezone.utc).timestamp(),
+            },
+        ]
+        filtered = filter_worktree_items(
+            items=items,
+            run_id_prefix="20260626T13",
+            since=parse_iso_datetime("2026-06-26T12:30:00Z"),
+            until=parse_iso_datetime("2026-06-26T14:00:00Z"),
+        )
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["path"], "/tmp/b")
+
+    def test_apply_min_score_filters_hits(self) -> None:
+        hits = [{"score": 0.8}, {"score": 0.4}, {"score": 0.1}]
+        filtered = apply_min_score(hits, min_score=0.3)
+        self.assertEqual(len(filtered), 2)
+
+    def test_validate_policy_explain_contract(self) -> None:
+        payload = {
+            "policy_explain": {
+                "schema_version": "1.0.0",
+                "final_status": "policy_blocked_side_effects",
+                "gates": [{"gate": "blanket"}, {"gate": "confirm"}],
+            }
+        }
+        ok, errors = validate_policy_explain_contract(payload, expected_schema="1.0.0")
+        self.assertTrue(ok)
+        self.assertEqual(errors, [])
+
+    def test_build_retention_report_contains_candidates(self) -> None:
+        now = datetime(2026, 6, 26, 14, 0, 0, tzinfo=timezone.utc)
+        policy = {"worktree_retention": {"ttl_hours": 1, "max_keep": 1}}
+        items = [
+            {"run_id": "20260626T135900.000000Z-aaaaaa", "path": "/tmp/w1", "mtime_epoch": now.timestamp()},
+            {"run_id": "20260626T120000.000000Z-bbbbbb", "path": "/tmp/w2", "mtime_epoch": now.timestamp() - 7200},
+        ]
+        report = build_retention_report(items=items, policy=policy, now=now)
+        self.assertEqual(report["candidate_count"], 1)
+        self.assertEqual(report["candidates"][0]["path"], "/tmp/w2")
+
+    def test_policy_explain_chain_includes_act_live_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = self.run_with_defaults(
+                tmp,
+                idea="Prepare docs branch plan.",
+                auto_confirm=True,
+                non_interactive=False,
+                sandbox_adapter="worktree-live",
+                allow_side_effects=False,
+            )
+            explain = manifest["policy_explain"]
+            gates = [item["gate"] for item in explain["gates"]]
+            self.assertIn("blanket", gates)
+            self.assertIn("confirm", gates)
+            self.assertIn("act-live-policy", gates)
 
 
 if __name__ == "__main__":
