@@ -26,6 +26,7 @@ Status: design exploration
 | 文档 | 内容 |
 |------|------|
 | [capability-map.md](capability-map.md) | Mind / Voice / Gate / Hands / Memory 五层能力地图 |
+| [mvp-closed-loop.md](mvp-closed-loop.md) | 最小闭环可执行原型：从设计到本地可跑流程 |
 | [sandbox-brain.md](sandbox-brain.md) | Agent Brain、推演沙盒、执行沙盒、action manifest |
 | [voice-control.md](voice-control.md) | 床上低屏幕/语音控制规划 |
 | [agent-constraint-frameworks.md](agent-constraint-frameworks.md) | Guardrails、HITL、约束框架调研 |

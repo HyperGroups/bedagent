@@ -37,7 +37,7 @@ bedagent 的早期工作不是“实现功能”，而是找到正确问题：
 ```text
 Design Version: D0.1
 Codename: Book of Sloth / Sage
-Status: design exploration
+Status: design exploration + MVP prototyping
 ```
 
 D0.1 的核心定义：
@@ -46,6 +46,7 @@ D0.1 的核心定义：
 bedagent = 面向床上思想者的 Agent 控制系统
 形态 = 控制层 + 协议 + 角色系统
 链路 = Nest → Sage → Prune → Dream → Fold → Blanket → Hands → Pillow Note → Bedside Journal
+Milestone = v0.5.0-mvp (retention cleanup + semantic memory search + policy explain)
 ```
 
 ## Design Version 规则

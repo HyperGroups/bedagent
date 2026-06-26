@@ -144,12 +144,27 @@ https://hypergroups.github.io/bedagent/
 | [docs/laziness-and-pruning.md](docs/laziness-and-pruning.md) | 懒的分型、快速思考与剪枝原则 |
 | [docs/research-map.md](docs/research-map.md) | 相关工作研究地图：语音、PKM、Agent、Guardrails、沙盒 |
 | [docs/capability-map.md](docs/capability-map.md) | bedagent 应该有哪些功能 |
+| [docs/mvp-closed-loop.md](docs/mvp-closed-loop.md) | 最小闭环实现进展与下一步 |
 | [docs/sandbox-brain.md](docs/sandbox-brain.md) | Agent 大脑、推演沙盒、执行沙盒 |
 | [docs/voice-control.md](docs/voice-control.md) | 床上低屏幕/语音控制规划 |
 | [docs/agent-constraint-frameworks.md](docs/agent-constraint-frameworks.md) | Agent 约束/治理框架调研 |
 | [ideas/README.md](ideas/README.md) | 候选路线索引 |
 | [ref/README.md](ref/README.md) | 参考快照目录说明 |
 | [site/](site/) | bedagent 理念展示网站源码 |
+
+## Prototype status
+
+The first executable local MVP is now available:
+
+```text
+mvp/bedagent_mvp.py
+```
+
+It runs the minimal closed loop and writes run artifacts to:
+
+```text
+.bedagent/runs/<run_id>/manifest.json
+```
 
 ## 不是什么
 

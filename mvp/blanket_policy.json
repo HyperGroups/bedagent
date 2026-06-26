@@ -1,0 +1,52 @@
+{
+  "red_keywords": [
+    "billing",
+    "credential",
+    "delete",
+    "deploy",
+    "destroy",
+    "drop",
+    "key",
+    "merge",
+    "password",
+    "payment",
+    "prod",
+    "production",
+    "push",
+    "secret",
+    "token"
+  ],
+  "yellow_keywords": [
+    "change",
+    "commit",
+    "create",
+    "edit",
+    "migrate",
+    "modify",
+    "refactor",
+    "rename",
+    "update",
+    "write"
+  ],
+  "allow_auto_confirm_red": false,
+  "allow_live_adapter_by_risk": {
+    "green": true,
+    "yellow": true,
+    "red": false
+  },
+  "live_adapter_block_keywords": [
+    "production",
+    "prod",
+    "billing",
+    "payment"
+  ],
+  "worktree_retention": {
+    "ttl_hours": 24,
+    "max_keep": 5
+  },
+  "require_confirmation_by_risk": {
+    "green": false,
+    "yellow": true,
+    "red": true
+  }
+}

@@ -19,6 +19,10 @@ Thumbs.db
 node_modules/
 dist/
 
+# Python cache
+__pycache__/
+*.pyc
+
 # Reference snapshots may be committed for GitHub browsing.
 # Never commit nested VCS metadata or generated artifacts inside references.
 /ref/ref_repos/*/.git/
