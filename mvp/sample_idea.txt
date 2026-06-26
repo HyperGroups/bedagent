@@ -1,0 +1,1 @@
+Need to implement a tiny closed-loop prototype for bedagent, include a structured manifest, and avoid direct production changes.
