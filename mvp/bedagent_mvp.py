@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import textwrap
 import uuid
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 
-RED_KEYWORDS = {
+DEFAULT_RED_KEYWORDS = {
     "delete",
     "drop",
     "destroy",
@@ -36,7 +37,7 @@ RED_KEYWORDS = {
     "push",
 }
 
-YELLOW_KEYWORDS = {
+DEFAULT_YELLOW_KEYWORDS = {
     "write",
     "modify",
     "change",
@@ -123,9 +124,19 @@ def classify_focus_action(branch: str, main_thread: str) -> str:
 
 
 def classify_risk(value: str) -> dict[str, str]:
+    return classify_risk_with_policy(
+        value=value,
+        red_keywords=DEFAULT_RED_KEYWORDS,
+        yellow_keywords=DEFAULT_YELLOW_KEYWORDS,
+    )
+
+
+def classify_risk_with_policy(
+    value: str, red_keywords: set[str], yellow_keywords: set[str]
+) -> dict[str, str]:
     lowered = value.lower()
-    red_hits = sorted(k for k in RED_KEYWORDS if k in lowered)
-    yellow_hits = sorted(k for k in YELLOW_KEYWORDS if k in lowered)
+    red_hits = sorted(k for k in red_keywords if k in lowered)
+    yellow_hits = sorted(k for k in yellow_keywords if k in lowered)
     if red_hits:
         return {"level": "red", "reason": f"high-impact keywords: {', '.join(red_hits)}"}
     if yellow_hits:
@@ -168,7 +179,7 @@ def stage_focus(capture: dict[str, Any], sage: dict[str, Any]) -> dict[str, Any]
     return {"decisions": decisions}
 
 
-def stage_think(capture: dict[str, Any], sage: dict[str, Any]) -> dict[str, Any]:
+def stage_think(capture: dict[str, Any], sage: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     intent = sage["intent"]
     if intent == "debug_or_fix":
         options = [
@@ -188,7 +199,9 @@ def stage_think(capture: dict[str, Any], sage: dict[str, Any]) -> dict[str, Any]
             "Create minimal executable artifact",
             "Collect validation evidence and summarize",
         ]
-    risk = classify_risk(capture["idea"])
+    risk = classify_risk_with_policy(
+        capture["idea"], set(policy["red_keywords"]), set(policy["yellow_keywords"])
+    )
     return {"options": options, "risk_preview": risk}
 
 
@@ -205,9 +218,31 @@ def stage_plan(sage: dict[str, Any], think: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def stage_confirm(plan: dict[str, Any], auto_confirm: bool, non_interactive: bool) -> dict[str, Any]:
+def stage_blanket(plan: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     risk_level = plan["risk"]["level"]
+    confirmation = policy["require_confirmation_by_risk"].get(risk_level, True)
+    return {
+        "risk_level": risk_level,
+        "risk_reason": plan["risk"]["reason"],
+        "requires_confirmation": confirmation,
+        "allow_auto_confirm_red": policy["allow_auto_confirm_red"],
+    }
+
+
+def stage_confirm(
+    plan: dict[str, Any],
+    blanket: dict[str, Any],
+    auto_confirm: bool,
+    non_interactive: bool,
+) -> dict[str, Any]:
+    risk_level = blanket["risk_level"]
     if auto_confirm:
+        if risk_level == "red" and not blanket["allow_auto_confirm_red"]:
+            return {
+                "approved": False,
+                "mode": "policy_blocked_auto_confirm_red",
+                "risk_level": risk_level,
+            }
         return {"approved": True, "mode": "auto_confirm", "risk_level": risk_level}
     if non_interactive:
         return {"approved": False, "mode": "non_interactive_default_deny", "risk_level": risk_level}
@@ -228,17 +263,26 @@ def stage_confirm(plan: dict[str, Any], auto_confirm: bool, non_interactive: boo
     return {"approved": approved, "mode": "interactive", "risk_level": risk_level}
 
 
-def stage_act(ctx: RunContext, plan: dict[str, Any], confirm: dict[str, Any]) -> dict[str, Any]:
-    hands_dir = ctx.run_dir / "hands"
-    hands_dir.mkdir(parents=True, exist_ok=True)
+def detect_git_context(repo_root: Path) -> dict[str, str]:
+    try:
+        top = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        branch = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        return {"repo_root": top, "branch": branch}
+    except subprocess.CalledProcessError:
+        return {}
 
-    if not confirm["approved"]:
-        return {
-            "status": "skipped",
-            "reason": "execution not approved",
-            "sandbox_path": str(hands_dir),
-        }
 
+def act_with_simulated_adapter(hands_dir: Path, plan: dict[str, Any]) -> dict[str, Any]:
     task_md = ["# Hands task list", ""]
     for task in plan["tasks"]:
         task_md.append(f"- [ ] {task['id']}: {task['title']}")
@@ -255,12 +299,86 @@ def stage_act(ctx: RunContext, plan: dict[str, Any], confirm: dict[str, Any]) ->
         json.dumps(receipt, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    return {"status": "simulated_success", "sandbox_path": str(hands_dir), "receipt": receipt}
+    return {"status": "simulated_success", "adapter": "simulated", "receipt": receipt}
+
+
+def act_with_worktree_dry_run_adapter(
+    hands_dir: Path, repo_root: Path, run_id: str, plan: dict[str, Any]
+) -> dict[str, Any]:
+    git_ctx = detect_git_context(repo_root)
+    if not git_ctx:
+        return {
+            "status": "adapter_error",
+            "adapter": "worktree-dry-run",
+            "reason": f"'{repo_root}' is not a git repository",
+        }
+
+    target_branch = f"bedagent/run-{run_id.replace('.', '-').lower()}"
+    relative_worktree = f".bedagent/worktrees/{run_id}"
+    plan_lines = [
+        "# Worktree dry-run plan",
+        "",
+        "This adapter does not execute commands. It only writes a dry-run plan.",
+        "",
+        f"- Repo root: {git_ctx['repo_root']}",
+        f"- Current branch: {git_ctx['branch']}",
+        f"- Suggested target branch: {target_branch}",
+        f"- Suggested worktree path: {relative_worktree}",
+        "",
+        "## Proposed commands",
+        "```bash",
+        f"git -C \"{git_ctx['repo_root']}\" worktree add -b \"{target_branch}\" \"{relative_worktree}\" \"{git_ctx['branch']}\"",
+        f"git -C \"{relative_worktree}\" status --short --branch",
+        "```",
+        "",
+        "## Planned tasks",
+    ]
+    for task in plan["tasks"]:
+        plan_lines.append(f"- [ ] {task['id']}: {task['title']}")
+    (hands_dir / "WORKTREE_DRY_RUN_PLAN.md").write_text("\n".join(plan_lines), encoding="utf-8")
+
+    return {
+        "status": "dry_run_ready",
+        "adapter": "worktree-dry-run",
+        "dry_run_plan_path": str(hands_dir / "WORKTREE_DRY_RUN_PLAN.md"),
+        "git_context": git_ctx,
+    }
+
+
+def stage_act(
+    ctx: RunContext,
+    plan: dict[str, Any],
+    confirm: dict[str, Any],
+    sandbox_adapter: str,
+    git_repo_root: Path,
+) -> dict[str, Any]:
+    hands_dir = ctx.run_dir / "hands"
+    hands_dir.mkdir(parents=True, exist_ok=True)
+
+    if not confirm["approved"]:
+        return {
+            "status": "skipped",
+            "reason": "execution not approved",
+            "sandbox_path": str(hands_dir),
+        }
+
+    if sandbox_adapter == "simulated":
+        result = act_with_simulated_adapter(hands_dir, plan)
+    elif sandbox_adapter == "worktree-dry-run":
+        result = act_with_worktree_dry_run_adapter(
+            hands_dir=hands_dir, repo_root=git_repo_root, run_id=ctx.run_id, plan=plan
+        )
+    else:
+        result = {"status": "adapter_error", "adapter": sandbox_adapter, "reason": "unknown adapter"}
+    result["sandbox_path"] = str(hands_dir)
+    return result
 
 
 def stage_report(act: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
     if act["status"] == "simulated_success":
         sentence = "Closed loop completed: plan approved, sandbox execution simulated, report delivered."
+    elif act["status"] == "dry_run_ready":
+        sentence = "Closed loop completed: plan approved, worktree dry-run plan generated."
     else:
         sentence = "Closed loop paused: waiting for explicit execution approval."
     return {"pillow_note": sentence, "risk_level": plan["risk"]["level"]}
@@ -270,33 +388,113 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def run_closed_loop(idea: str, output_root: Path, auto_confirm: bool, non_interactive: bool) -> dict[str, Any]:
+def load_blanket_policy(policy_path: Path) -> dict[str, Any]:
+    default_policy = {
+        "red_keywords": sorted(DEFAULT_RED_KEYWORDS),
+        "yellow_keywords": sorted(DEFAULT_YELLOW_KEYWORDS),
+        "allow_auto_confirm_red": False,
+        "require_confirmation_by_risk": {"green": False, "yellow": True, "red": True},
+    }
+    if not policy_path.exists():
+        return default_policy
+    loaded = json.loads(policy_path.read_text(encoding="utf-8"))
+    merged = dict(default_policy)
+    merged.update(loaded)
+    merged["require_confirmation_by_risk"] = {
+        **default_policy["require_confirmation_by_risk"],
+        **loaded.get("require_confirmation_by_risk", {}),
+    }
+    return merged
+
+
+def append_memory_entry(journal_path: Path, entry: dict[str, Any]) -> dict[str, Any]:
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(entry, ensure_ascii=False)
+    with journal_path.open("a", encoding="utf-8") as fp:
+        fp.write(line + "\n")
+    return {"journal_path": str(journal_path), "entry_appended": True}
+
+
+def stage_memory(
+    journal_path: Path, run_id: str, capture: dict[str, Any], report: dict[str, Any], act: dict[str, Any]
+) -> dict[str, Any]:
+    entry = {
+        "recorded_at": now_iso(),
+        "run_id": run_id,
+        "idea": capture["idea"],
+        "risk_level": report["risk_level"],
+        "act_status": act["status"],
+        "pillow_note": report["pillow_note"],
+    }
+    result = append_memory_entry(journal_path=journal_path, entry=entry)
+    result["entry"] = entry
+    return result
+
+
+def run_closed_loop(
+    idea: str,
+    output_root: Path,
+    auto_confirm: bool,
+    non_interactive: bool,
+    blanket_policy_path: Path,
+    sandbox_adapter: str,
+    memory_journal_path: Path,
+    git_repo_root: Path,
+) -> dict[str, Any]:
     run_id = build_run_id()
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     ctx = RunContext(run_id=run_id, run_dir=run_dir, idea=idea)
+    policy = load_blanket_policy(blanket_policy_path)
 
     capture = stage_capture(ctx)
     sage = stage_sage(capture)
     focus = stage_focus(capture, sage)
-    think = stage_think(capture, sage)
+    think = stage_think(capture, sage, policy=policy)
     plan = stage_plan(sage, think)
-    confirm = stage_confirm(plan, auto_confirm=auto_confirm, non_interactive=non_interactive)
-    act = stage_act(ctx, plan, confirm)
+    blanket = stage_blanket(plan, policy)
+    confirm = stage_confirm(
+        plan, blanket=blanket, auto_confirm=auto_confirm, non_interactive=non_interactive
+    )
+    act = stage_act(
+        ctx,
+        plan,
+        confirm,
+        sandbox_adapter=sandbox_adapter,
+        git_repo_root=git_repo_root,
+    )
     report = stage_report(act, plan)
+    memory = stage_memory(
+        journal_path=memory_journal_path,
+        run_id=run_id,
+        capture=capture,
+        report=report,
+        act=act,
+    )
 
     manifest = {
         "run_id": run_id,
         "generated_at": now_iso(),
-        "flow": "Capture -> Sage -> Focus -> Think -> Plan -> Confirm -> Act Sandbox -> Short Report",
+        "flow": (
+            "Capture -> Sage -> Focus -> Think -> Plan -> Blanket -> Confirm -> "
+            "Act Sandbox -> Short Report -> Memory"
+        ),
+        "config": {
+            "blanket_policy_path": str(blanket_policy_path),
+            "sandbox_adapter": sandbox_adapter,
+            "memory_journal_path": str(memory_journal_path),
+            "git_repo_root": str(git_repo_root),
+        },
         "capture": capture,
         "sage": sage,
         "focus": focus,
         "think": think,
         "plan": plan,
+        "blanket": blanket,
         "confirm": confirm,
         "act": act,
         "report": report,
+        "memory": memory,
     }
     write_json(run_dir / "manifest.json", manifest)
     return manifest
@@ -334,6 +532,27 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="never ask for prompt; deny execution unless --auto-confirm is given",
     )
+    run.add_argument(
+        "--blanket-policy",
+        default="mvp/blanket_policy.json",
+        help="path to blanket policy JSON",
+    )
+    run.add_argument(
+        "--sandbox-adapter",
+        choices=["simulated", "worktree-dry-run"],
+        default="simulated",
+        help="sandbox adapter for Act stage",
+    )
+    run.add_argument(
+        "--memory-journal",
+        default=".bedagent/memory/journal.ndjson",
+        help="append-only memory journal path",
+    )
+    run.add_argument(
+        "--git-repo-root",
+        default=".",
+        help="repository root path for worktree-dry-run adapter",
+    )
 
     return parser.parse_args()
 
@@ -363,6 +582,10 @@ def main() -> int:
         output_root=Path(args.output_root),
         auto_confirm=args.auto_confirm,
         non_interactive=args.non_interactive,
+        blanket_policy_path=Path(args.blanket_policy),
+        sandbox_adapter=args.sandbox_adapter,
+        memory_journal_path=Path(args.memory_journal),
+        git_repo_root=Path(args.git_repo_root),
     )
 
     print("")

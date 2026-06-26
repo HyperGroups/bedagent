@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.1.0-mvp (prototype)
-Status: implemented (local prototype)
+Product Milestone: v0.2.0-mvp (prototype)
+Status: implemented (local prototype + policy/adapter/memory)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -13,7 +13,7 @@ This document tracks the first executable bedagent loop in this repository.
 Implemented flow:
 
 ```text
-Capture -> Sage -> Focus -> Think -> Plan -> Confirm -> Act Sandbox -> Short Report
+Capture -> Sage -> Focus -> Think -> Plan -> Blanket -> Confirm -> Act Sandbox -> Short Report -> Memory
 ```
 
 Implemented artifact:
@@ -44,12 +44,18 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    Generates option-level reasoning and a risk preview.
 5. **Plan**  
    Produces executable task list and handoff summary.
-6. **Confirm**  
+6. **Blanket**  
+   Applies policy-driven risk gates from `mvp/blanket_policy.json`.
+7. **Confirm**  
    Enforces explicit approval before execution (default deny in non-interactive mode).
-7. **Act Sandbox**  
-   Writes simulated execution artifacts under run-scoped sandbox path.
-8. **Short Report**  
+8. **Act Sandbox**  
+   Uses pluggable adapters:
+   - `simulated`
+   - `worktree-dry-run` (generate plan only, no git side effect)
+9. **Short Report**  
    Produces one sentence `pillow_note`.
+10. **Memory**  
+   Appends run summary to `.bedagent/memory/journal.ndjson` (append-only).
 
 ## Output contract
 
@@ -63,16 +69,30 @@ The manifest includes all stage outputs and is intended to be the seed contract
 for future protocol stabilization (`sage`, `action manifest`, `blanket`,
 `pillow_note`).
 
+## New v0.2 runtime options
+
+```bash
+python3 mvp/bedagent_mvp.py run \
+  --idea "Prepare safe branch execution plan" \
+  --blanket-policy mvp/blanket_policy.json \
+  --sandbox-adapter worktree-dry-run \
+  --memory-journal .bedagent/memory/journal.ndjson \
+  --git-repo-root . \
+  --auto-confirm
+```
+
+`--auto-confirm` is still constrained by blanket policy (`allow_auto_confirm_red`).
+
 ## Current limitations
 
 - No speech input/output yet.
 - No external model API; stage reasoning is heuristic.
-- No real command execution yet; Hands is simulated.
-- No persistent memory consolidation yet.
+- No real command execution yet; Hands is simulated or dry-run planned.
+- Memory is append-only journaling; no retrieval/ranking yet.
 
 ## Next implementation steps
 
-1. Introduce explicit `blanket` policy file and deterministic risk rules.
-2. Add optional sandbox runner abstraction (worktree/container adapters).
-3. Add lightweight memory append-only journal.
+1. Add deterministic `blanket` enforcement tests for custom policy overrides.
+2. Add real worktree executor behind explicit `--allow-side-effects` gate.
+3. Add memory reader for recap/prior-run suggestions.
 4. Add voice adapter as optional input/output layer.

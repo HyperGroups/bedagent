@@ -1,0 +1,37 @@
+{
+  "red_keywords": [
+    "billing",
+    "credential",
+    "delete",
+    "deploy",
+    "destroy",
+    "drop",
+    "key",
+    "merge",
+    "password",
+    "payment",
+    "prod",
+    "production",
+    "push",
+    "secret",
+    "token"
+  ],
+  "yellow_keywords": [
+    "change",
+    "commit",
+    "create",
+    "edit",
+    "migrate",
+    "modify",
+    "refactor",
+    "rename",
+    "update",
+    "write"
+  ],
+  "allow_auto_confirm_red": false,
+  "require_confirmation_by_risk": {
+    "green": false,
+    "yellow": true,
+    "red": true
+  }
+}

@@ -303,3 +303,34 @@ Capture -> Sage -> Focus -> Think -> Plan -> Confirm -> Act Sandbox -> Short Rep
 “全面推进”阶段需要从概念进入执行证据，但不能过早引入复杂 runtime 或高风险自动执行。
 
 先跑通闭环，才能迭代语音、策略文件、真实沙盒适配器和记忆层。
+
+## ADR-0010：引入 Blanket 策略文件、可插拔 Sandbox Adapter、Append-only Memory
+
+```yaml
+date: 2026-06-26
+design_version: D0.1
+status: accepted
+product_milestone: v0.2.0-mvp
+```
+
+### 决策
+
+在 v0.1.0-mvp 的最小闭环上增加三项运行时骨架：
+
+1. `blanket_policy.json` 作为可配置风险策略；
+2. `sandbox_adapter` 抽象（`simulated` + `worktree-dry-run`）；
+3. append-only memory journal（NDJSON）。
+
+### 原因
+
+“全面推进”需要从“能跑一次”升级到“可配置、可扩展、可追溯”：
+
+- 可配置：风险规则不能硬编码在实现里；
+- 可扩展：Hands 需要有适配器边界，后续接 container/worktree 才不重写；
+- 可追溯：每次运行要沉淀最小记忆证据。
+
+### 边界
+
+- `worktree-dry-run` 只生成执行计划，不直接执行 git 命令；
+- memory 目前只追加，不做检索、合并、总结；
+- 仍然保持“默认保守”，避免真实副作用。

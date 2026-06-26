@@ -3,7 +3,7 @@
 This directory contains an executable prototype for the first bedagent loop:
 
 ```text
-Capture -> Sage -> Focus -> Think -> Plan -> Confirm -> Act Sandbox -> Short Report
+Capture -> Sage -> Focus -> Think -> Plan -> Blanket -> Confirm -> Act Sandbox -> Short Report -> Memory
 ```
 
 ## Why this exists
@@ -12,8 +12,10 @@ The repository has completed design exploration (D0.1).
 This MVP turns the design into a runnable local controller with:
 
 - structured stage outputs (`manifest.json`);
+- policy-driven blanket risk gate (`mvp/blanket_policy.json`);
 - explicit confirmation step before execution;
-- sandbox-only execution (simulated in MVP);
+- pluggable sandbox adapters (`simulated`, `worktree-dry-run`);
+- append-only memory journal;
 - one-line short report (`pillow_note`).
 
 ## Quick start
@@ -26,11 +28,27 @@ python3 mvp/bedagent_mvp.py run \
   --auto-confirm
 ```
 
+Using worktree dry-run adapter:
+
+```bash
+python3 mvp/bedagent_mvp.py run \
+  --idea "Prepare safe branch execution plan" \
+  --sandbox-adapter worktree-dry-run \
+  --auto-confirm
+```
+
 Or using an input file:
 
 ```bash
 python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactive
 ```
+
+## Key runtime flags
+
+- `--blanket-policy`: blanket policy JSON file path.
+- `--sandbox-adapter`: `simulated` or `worktree-dry-run`.
+- `--memory-journal`: append-only NDJSON journal file.
+- `--git-repo-root`: git repository root used by worktree dry-run adapter.
 
 ## Output artifacts
 
@@ -43,14 +61,16 @@ Every run is written to:
 Main artifact:
 
 - `manifest.json`: full flow output for all stages.
+- `memory` stage appends one record to the journal file.
 
 When execution is approved, the sandbox subfolder also includes:
 
-- `hands/TASKS.md`
-- `hands/execution_receipt.json`
+- for `simulated`: `hands/TASKS.md`, `hands/execution_receipt.json`
+- for `worktree-dry-run`: `hands/WORKTREE_DRY_RUN_PLAN.md`
 
 ## Notes
 
 - This MVP intentionally uses heuristic logic (no model API required).
-- `Act Sandbox` is simulated by writing artifacts only; no external side effects.
+- `worktree-dry-run` does not run git commands; it only emits a plan file.
 - High-risk ideas require stronger explicit confirmation (`YES`) in interactive mode.
+- `--auto-confirm` does not bypass red-risk policy when `allow_auto_confirm_red` is `false`.
