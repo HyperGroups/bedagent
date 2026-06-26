@@ -489,3 +489,34 @@ product_milestone: v0.7.0-mvp
 - 输出 JSON 先只覆盖 retention-report；
 - 过滤器是前置筛选，不是语义排序替代；
 - schema version 先版本化 explain，不代表整个 manifest 已版本化。
+
+## ADR-0016：新增 explain 校验器与 retention/report 过滤能力
+
+```yaml
+date: 2026-06-26
+design_version: D0.1
+status: accepted
+product_milestone: v0.8.0-mvp
+```
+
+### 决策
+
+在 v0.7.0-mvp 的基础上继续推进：
+
+1. `validate-explain` 子命令，校验 `policy_explain` 结构与 schema 版本；
+2. `worktree list` / `retention-report` 增加 `run_id_prefix/since/until` 过滤器；
+3. `memory-search` 增加 `--min-score` 阈值与 `--explain` 明细开关。
+
+### 原因
+
+为后续自动化集成做准备：
+
+- 校验器让 explain 合同具备机器验证能力；
+- 过滤器让治理/排障命令更精准；
+- 最小分数阈值与 explain 开关让检索结果更可控。
+
+### 边界
+
+- explain 校验仅针对 `policy_explain`；
+- worktree 过滤仅作用于 `list/retention-report`；
+- 检索仍为本地 TF-IDF，不引入外部检索服务。

@@ -761,6 +761,11 @@ def semantic_memory_search(entries: list[dict[str, Any]], query: str, top_k: int
     return ranked[: max(1, top_k)]
 
 
+def apply_min_score(hits: list[dict[str, Any]], min_score: float) -> list[dict[str, Any]]:
+    threshold = max(0.0, float(min_score))
+    return [hit for hit in hits if float(hit.get("score", 0.0)) >= threshold]
+
+
 def build_recap(journal_path: Path, limit: int) -> dict[str, Any]:
     entries = read_memory_entries(journal_path, limit=limit)
     by_risk: dict[str, int] = {"green": 0, "yellow": 0, "red": 0}
@@ -805,6 +810,33 @@ def parse_run_id_datetime(run_id: str) -> datetime | None:
         return base.replace(tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def resolve_worktree_run_datetime(item: dict[str, Any]) -> datetime:
+    dt = parse_run_id_datetime(item["run_id"])
+    if dt is not None:
+        return dt
+    return datetime.fromtimestamp(item["mtime_epoch"], tz=timezone.utc)
+
+
+def filter_worktree_items(
+    items: list[dict[str, Any]],
+    run_id_prefix: str | None,
+    since: datetime | None,
+    until: datetime | None,
+) -> list[dict[str, Any]]:
+    filtered = []
+    for item in items:
+        run_id = str(item.get("run_id", ""))
+        if run_id_prefix and not run_id.startswith(run_id_prefix):
+            continue
+        run_dt = resolve_worktree_run_datetime(item)
+        if since and run_dt < since:
+            continue
+        if until and run_dt > until:
+            continue
+        filtered.append(item)
+    return filtered
 
 
 def select_worktree_cleanup_candidates(
@@ -893,6 +925,32 @@ def remove_worktree(repo_root: Path, worktree_path: Path, force: bool) -> tuple[
         command.append("--force")
     command.append(str(worktree_path))
     return run_command(command)
+
+
+def validate_policy_explain_contract(
+    payload: dict[str, Any], expected_schema: str
+) -> tuple[bool, list[str]]:
+    errors: list[str] = []
+    policy = payload.get("policy_explain")
+    if not isinstance(policy, dict):
+        return False, ["missing or invalid 'policy_explain' object"]
+    if policy.get("schema_version") != expected_schema:
+        errors.append(
+            f"schema_version mismatch: expected '{expected_schema}', got '{policy.get('schema_version')}'"
+        )
+    if "final_status" not in policy:
+        errors.append("missing 'final_status'")
+    gates = policy.get("gates")
+    if not isinstance(gates, list):
+        errors.append("missing or invalid 'gates' list")
+    else:
+        for idx, gate in enumerate(gates):
+            if not isinstance(gate, dict):
+                errors.append(f"gate[{idx}] is not an object")
+                continue
+            if "gate" not in gate:
+                errors.append(f"gate[{idx}] missing 'gate' key")
+    return (len(errors) == 0), errors
 
 
 def run_closed_loop(
@@ -1063,6 +1121,17 @@ def parse_args() -> argparse.Namespace:
         help="number of results to return",
     )
     memory_search.add_argument(
+        "--min-score",
+        default=0.0,
+        type=float,
+        help="minimum score threshold for returned hits",
+    )
+    memory_search.add_argument(
+        "--explain",
+        action="store_true",
+        help="show per-field score detail for each result",
+    )
+    memory_search.add_argument(
         "--risk-level",
         choices=["green", "yellow", "red"],
         help="filter entries by risk level before retrieval",
@@ -1125,6 +1194,26 @@ def parse_args() -> argparse.Namespace:
         "--output-json",
         help="optional path to write retention report JSON (retention-report action)",
     )
+    worktree.add_argument(
+        "--run-id-prefix",
+        help="optional run_id prefix filter for list/retention-report",
+    )
+    worktree.add_argument(
+        "--since",
+        help="optional lower bound ISO timestamp for list/retention-report",
+    )
+    worktree.add_argument(
+        "--until",
+        help="optional upper bound ISO timestamp for list/retention-report",
+    )
+
+    validate = sub.add_parser("validate-explain", help="validate policy_explain schema in manifest")
+    validate.add_argument("--manifest", required=True, help="path to manifest.json")
+    validate.add_argument(
+        "--expected-schema",
+        default=POLICY_EXPLAIN_SCHEMA_VERSION,
+        help="expected policy_explain schema version",
+    )
 
     return parser.parse_args()
 
@@ -1168,6 +1257,7 @@ def main() -> int:
             since=since_dt,
         )
         hits = semantic_memory_search(entries=entries, query=args.query, top_k=max(1, args.top_k))
+        hits = apply_min_score(hits=hits, min_score=args.min_score)
         print("")
         print("=== bedagent memory semantic search ===")
         print(f"journal: {args.memory_journal}")
@@ -1178,6 +1268,7 @@ def main() -> int:
             f"status={args.act_status or '-'} "
             f"since={args.since or '-'}"
         )
+        print(f"min_score: {args.min_score}")
         print(f"scanned: {len(entries)}")
         print(f"returned: {len(hits)}")
         for idx, hit in enumerate(hits, start=1):
@@ -1188,7 +1279,7 @@ def main() -> int:
             )
             print(f"   idea: {entry.get('idea', '-')}")
             detail = hit.get("detail", {})
-            if detail:
+            if args.explain and detail:
                 print(f"   detail: {json.dumps(detail, ensure_ascii=False)}")
         return 0
 
@@ -1196,8 +1287,11 @@ def main() -> int:
         repo_root = Path(args.git_repo_root)
         worktree_root = Path(args.worktree_root)
         policy = load_blanket_policy(Path(args.blanket_policy))
+        since = parse_iso_datetime(args.since) if args.since else None
+        until = parse_iso_datetime(args.until) if args.until else None
         if args.action == "list":
             items = list_managed_worktrees(worktree_root)
+            items = filter_worktree_items(items, args.run_id_prefix, since, until)
             print("")
             print("=== bedagent managed worktrees ===")
             print(f"root: {worktree_root}")
@@ -1260,6 +1354,7 @@ def main() -> int:
 
         if args.action == "retention-report":
             items = list_managed_worktrees(worktree_root)
+            items = filter_worktree_items(items, args.run_id_prefix, since, until)
             report = build_retention_report(items=items, policy=policy, now=datetime.now(timezone.utc))
             print("")
             print("=== bedagent worktree retention report ===")
@@ -1282,6 +1377,19 @@ def main() -> int:
             return 0
 
         raise ValueError(f"Unsupported worktree action: {args.action}")
+
+    if args.command == "validate-explain":
+        manifest_path = Path(args.manifest)
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        ok, errors = validate_policy_explain_contract(payload, expected_schema=args.expected_schema)
+        print("")
+        print("=== bedagent policy explain validation ===")
+        print(f"manifest: {manifest_path}")
+        print(f"expected_schema: {args.expected_schema}")
+        print(f"valid: {ok}")
+        for err in errors:
+            print(f"- error: {err}")
+        return 0 if ok else 1
 
     if args.command != "run":
         raise ValueError(f"Unsupported command: {args.command}")

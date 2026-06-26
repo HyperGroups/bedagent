@@ -5,16 +5,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bedagent_mvp import (
+    apply_min_score,
     build_retention_report,
     build_recap,
     build_run_id,
     evaluate_live_policy,
     filter_memory_entries,
+    filter_worktree_items,
     list_managed_worktrees,
     parse_iso_datetime,
     run_closed_loop,
     select_worktree_cleanup_candidates,
     semantic_memory_search,
+    validate_policy_explain_contract,
 )
 
 
@@ -250,6 +253,45 @@ class BedagentMvpTests(unittest.TestCase):
         )
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0]["run_id"], "2")
+
+    def test_filter_worktree_items_by_prefix_and_time_range(self) -> None:
+        items = [
+            {
+                "run_id": "20260626T120000.000000Z-aaaaaa",
+                "path": "/tmp/a",
+                "mtime_epoch": datetime(2026, 6, 26, 12, 0, tzinfo=timezone.utc).timestamp(),
+            },
+            {
+                "run_id": "20260626T130000.000000Z-bbbbbb",
+                "path": "/tmp/b",
+                "mtime_epoch": datetime(2026, 6, 26, 13, 0, tzinfo=timezone.utc).timestamp(),
+            },
+        ]
+        filtered = filter_worktree_items(
+            items=items,
+            run_id_prefix="20260626T13",
+            since=parse_iso_datetime("2026-06-26T12:30:00Z"),
+            until=parse_iso_datetime("2026-06-26T14:00:00Z"),
+        )
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["path"], "/tmp/b")
+
+    def test_apply_min_score_filters_hits(self) -> None:
+        hits = [{"score": 0.8}, {"score": 0.4}, {"score": 0.1}]
+        filtered = apply_min_score(hits, min_score=0.3)
+        self.assertEqual(len(filtered), 2)
+
+    def test_validate_policy_explain_contract(self) -> None:
+        payload = {
+            "policy_explain": {
+                "schema_version": "1.0.0",
+                "final_status": "policy_blocked_side_effects",
+                "gates": [{"gate": "blanket"}, {"gate": "confirm"}],
+            }
+        }
+        ok, errors = validate_policy_explain_contract(payload, expected_schema="1.0.0")
+        self.assertTrue(ok)
+        self.assertEqual(errors, [])
 
     def test_build_retention_report_contains_candidates(self) -> None:
         now = datetime(2026, 6, 26, 14, 0, 0, tzinfo=timezone.utc)

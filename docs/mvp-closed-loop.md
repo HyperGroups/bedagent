@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.7.0-mvp (prototype)
-Status: implemented (json report export + filtered retrieval + schema contract)
+Product Milestone: v0.8.0-mvp (prototype)
+Status: implemented (validator + filtered governance views + retrieval controls)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -71,6 +71,8 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    `memory-search` supports `risk_level` / `act_status` / `since` filters.
 17. **Explain Schema Contract**  
    run-level `policy_explain` now includes `schema_version`.
+18. **Explain Validator**  
+   `validate-explain` validates schema version and required fields in manifest.
 
 ## Output contract
 
@@ -114,14 +116,21 @@ python3 mvp/bedagent_mvp.py memory-search \
   --risk-level yellow \
   --act-status worktree_created \
   --since 2026-06-26T00:00:00Z \
+  --min-score 0.2 \
+  --explain \
   --limit 100 \
   --top-k 3
+
+python3 mvp/bedagent_mvp.py validate-explain \
+  --manifest /tmp/bedagent-v07/20260626T150348.716111Z-1e51df/manifest.json \
+  --expected-schema 1.0.0
 ```
 
 Worktree lifecycle commands:
 
 ```bash
 python3 mvp/bedagent_mvp.py worktree list --worktree-root .bedagent/worktrees
+python3 mvp/bedagent_mvp.py worktree list --worktree-root .bedagent/worktrees --run-id-prefix 20260626T15 --since 2026-06-26T00:00:00Z
 python3 mvp/bedagent_mvp.py worktree cleanup --run-id <run_id> --allow-side-effects --force
 python3 mvp/bedagent_mvp.py worktree cleanup --apply-retention --blanket-policy mvp/blanket_policy.json --allow-side-effects --force
 python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blanket_policy.json --worktree-root .bedagent/worktrees --output-json .bedagent/reports/retention-report.json
