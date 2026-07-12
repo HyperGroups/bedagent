@@ -26,6 +26,10 @@ class VoiceAdapterTests(unittest.TestCase):
         text = extract_transcript_sentence({"text": "主角在梦里写字"})
         self.assertEqual(text, "主角在梦里写字")
 
+    def test_extract_transcript_sentence_empty_dict_text(self) -> None:
+        text = extract_transcript_sentence({"text": "", "sentence_id": 1})
+        self.assertEqual(text, "")
+
     def test_map_voice_command_recap(self) -> None:
         self.assertEqual(map_voice_command("汇报一下", self.config), "/recap")
 

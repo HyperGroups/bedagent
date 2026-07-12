@@ -108,11 +108,13 @@ def extract_transcript_sentence(sentence: Any) -> str:
     if isinstance(sentence, str):
         return sentence.strip()
     if isinstance(sentence, dict):
-        for key in ("text", "sentence", "result"):
+        if "text" in sentence:
+            return clean_text(str(sentence.get("text") or ""))
+        for key in ("sentence", "result"):
             value = sentence.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-        return clean_text(json.dumps(sentence, ensure_ascii=False))
+        return ""
     if isinstance(sentence, list):
         parts: list[str] = []
         for item in sentence:
