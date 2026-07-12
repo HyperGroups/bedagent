@@ -1807,46 +1807,35 @@ def main() -> int:
             paths.root.mkdir(parents=True, exist_ok=True)
             session, bible = load_story_state(paths, args.title)
             try:
-                transcript = transcribe_file(Path(args.audio_file), config=voice_config)
-                result = process_fragment(
+                from story_session import run_voice_story_once
+
+                payload = run_voice_story_once(
                     paths,
-                    transcript.text,
+                    Path(args.audio_file),
                     session,
                     bible,
                     policy=story_policy,
+                    voice_config=voice_config,
+                    voice_config_path=Path(args.voice_config),
                     auto_confirm=args.auto_confirm,
                     non_interactive=args.non_interactive,
                 )
-                turn_no = result["turn"]["turn"]
-                artifacts = voice_turn_paths(paths.voice, turn_no)
-                persist_voice_turn_artifacts(
-                    artifacts,
-                    transcript=transcript.text,
-                    agent_reply=result["agent_reply"],
-                    input_audio=Path(args.audio_file),
-                )
-                tts_text = build_tts_summary(result["agent_reply"], voice_config)
-                speak = synthesize_speech(tts_text, artifacts["reply_audio"], config=voice_config)
             except Exception as exc:
                 print(f"Voice error: {exc}")
                 return 1
             print("")
             print("=== bedagent story voice-once ===")
-            print(f"story_id: {paths.root.name}")
-            print(f"transcript: {transcript.text}")
-            print(f"applied: {result['applied']}")
-            print(result["agent_reply"])
-            print(f"reply_audio: {speak.output_path}")
+            print(f"story_id: {payload['story_id']}")
+            print(f"asr_model: {payload['asr_model']}")
+            print(f"transcript: {payload['transcript']}")
+            print(f"applied: {payload['applied']}")
+            print(payload["agent_reply"])
+            print(f"tts_model: {payload['tts_model']}")
+            print(f"reply_audio: {payload['reply_audio']}")
             if args.output_json:
-                payload = {
-                    "story_id": paths.root.name,
-                    "transcript": transcript.text,
-                    "turn": result,
-                    "reply_audio": speak.output_path,
-                }
                 output_path = Path(args.output_json)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
                 print(f"voice_once_json: {output_path}")
             return 0
 

@@ -56,6 +56,40 @@ class BedagentWebTests(unittest.TestCase):
         finally:
             server.shutdown()
 
+    def test_web_voice_story_closed_loop_simulated(self) -> None:
+        server = self.start_server()
+        port = server.server_address[1]
+        try:
+            simulate = "主角是一个维修AI，它在冬眠舰上偷听人类的梦。"
+            transcribe_body = (
+                f"--boundary\r\nContent-Disposition: form-data; name=\"simulate_transcript\"\r\n\r\n{simulate}\r\n"
+                f"--boundary--\r\n"
+            ).encode("utf-8")
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/voice/transcribe",
+                data=transcribe_body,
+                headers={"Content-Type": "multipart/form-data; boundary=boundary"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                transcribe = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(transcribe["model"], "simulated-asr")
+            self.assertIn("维修AI", transcribe["text"])
+
+            story_body = json.dumps({"fragment": transcribe["text"]}).encode("utf-8")
+            req2 = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/story/fragment",
+                data=story_body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req2, timeout=5) as resp:
+                story = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(story["applied"])
+            self.assertIn("维修AI", story["bible"]["main_thread"])
+        finally:
+            server.shutdown()
+
     def test_story_fragment_endpoint(self) -> None:
         server = self.start_server()
         port = server.server_address[1]

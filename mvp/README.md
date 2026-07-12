@@ -191,7 +191,21 @@ python3 mvp/bedagent_mvp.py story voice-once \
 python3 mvp/bedagent_mvp.py story voice --title "会做梦的维修AI" --mic --play-reply
 ```
 
-Voice config: `mvp/voice_config.json` (ASR/TTS models, voice, mic duration)
+Simulated voice (no DashScope ASR/TTS call):
+
+```bash
+# Sidecar transcript: oral-turn1.wav + oral-turn1.transcript.txt
+export BEDAGENT_TTS_SIMULATE=1
+python3 mvp/bedagent_mvp.py story voice-once \
+  --title "模拟语音闭环" \
+  --audio-file mvp/fixtures/voice/oral-turn1.wav \
+  --auto-confirm
+
+# Closed-loop test suite
+python3 -m unittest mvp.test_voice_story_closed_loop -v
+```
+
+Flow: **audio fixture → simulated ASR → Story Sage/Focus → simulated TTS → voice artifacts**
 
 Web Agent UI (GitHub Pages + optional local API):
 

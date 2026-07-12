@@ -215,6 +215,10 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                     "CONTENT_TYPE": self.headers.get("Content-Type", ""),
                 },
             )
+            simulate_text = form.getvalue("simulate_transcript")
+            if simulate_text:
+                json_response(self, 200, {"text": str(simulate_text).strip(), "model": "simulated-asr"})
+                return
             if "audio" not in form:
                 json_response(self, 400, {"error": "audio file field is required"})
                 return
@@ -223,6 +227,12 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             with tempfile.TemporaryDirectory() as tmp:
                 src = Path(tmp) / f"upload{suffix}"
                 src.write_bytes(item.file.read())
+                sidecar_text = form.getvalue("transcript_sidecar")
+                if sidecar_text:
+                    src.with_name(f"{src.stem}.transcript.txt").write_text(
+                        str(sidecar_text).strip() + "\n",
+                        encoding="utf-8",
+                    )
                 wav = convert_to_wav_if_needed(src)
                 result = transcribe_file(wav)
                 json_response(self, 200, {"text": result.text, "model": result.model})

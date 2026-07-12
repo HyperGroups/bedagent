@@ -129,18 +129,43 @@ def clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def simulated_transcript_sidecar(audio_path: Path) -> Path:
+    return audio_path.with_name(f"{audio_path.stem}.transcript.txt")
+
+
+def transcribe_simulated(audio_path: Path) -> TranscribeResult | None:
+    path = audio_path.expanduser().resolve()
+    sidecar = simulated_transcript_sidecar(path)
+    if not sidecar.exists():
+        return None
+    text = sidecar.read_text(encoding="utf-8").strip()
+    if not text:
+        raise VoiceAdapterError(f"Simulated transcript sidecar is empty: {sidecar}")
+    return TranscribeResult(
+        text=text,
+        model="simulated-asr",
+        audio_path=str(path),
+        request_id="simulated",
+        raw_sentence={"text": text, "simulated": True},
+    )
+
+
 def transcribe_file(
     audio_path: Path,
     config: dict[str, Any] | None = None,
     config_path: Path | None = None,
 ) -> TranscribeResult:
-    config = config or load_voice_config(config_path)
-    configure_dashscope(config)
-    from dashscope.audio.asr import Recognition
-
     path = audio_path.expanduser().resolve()
     if not path.exists():
         raise VoiceAdapterError(f"Audio file not found: {path}")
+
+    simulated = transcribe_simulated(path)
+    if simulated is not None:
+        return simulated
+
+    config = config or load_voice_config(config_path)
+    configure_dashscope(config)
+    from dashscope.audio.asr import Recognition
 
     recognition = Recognition(
         model=config["asr_model"],
@@ -207,12 +232,26 @@ def synthesize_speech(
     config_path: Path | None = None,
 ) -> SpeakResult:
     config = config or load_voice_config(config_path)
-    configure_dashscope(config)
-    from dashscope.audio.tts_v2 import SpeechSynthesizer
-
     speak_text = sanitize_tts_text(text, config)
     if not speak_text:
         raise VoiceAdapterError("TTS text is empty after sanitization.")
+
+    out = output_path.expanduser().resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    if os.environ.get("BEDAGENT_TTS_SIMULATE", "").lower() in {"1", "true", "yes"}:
+        write_silent_wav(out, seconds=0.25)
+        data = out.read_bytes()
+        return SpeakResult(
+            text=speak_text,
+            output_path=str(out),
+            model="simulated-tts",
+            voice="simulated",
+            byte_size=len(data),
+        )
+
+    configure_dashscope(config)
+    from dashscope.audio.tts_v2 import SpeechSynthesizer
 
     synthesizer = SpeechSynthesizer(
         model=config["tts_model"],
@@ -222,8 +261,6 @@ def synthesize_speech(
     if audio is None:
         raise VoiceAdapterError("DashScope TTS returned empty audio.")
 
-    out = output_path.expanduser().resolve()
-    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(audio)
 
     return SpeakResult(

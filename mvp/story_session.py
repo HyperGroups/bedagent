@@ -1117,6 +1117,68 @@ def run_story_tell(
     return recap
 
 
+def run_voice_story_once(
+    paths: StoryPaths,
+    audio_path: Path,
+    session: dict[str, Any],
+    bible: dict[str, Any],
+    policy: dict[str, Any] | None = None,
+    voice_config: dict[str, Any] | None = None,
+    voice_config_path: Path | None = None,
+    auto_confirm: bool = False,
+    non_interactive: bool = False,
+) -> dict[str, Any]:
+    """Voice closed loop: ASR (or simulated sidecar) -> Story -> TTS reply."""
+    from voice_adapter import (
+        build_tts_summary,
+        load_voice_config,
+        persist_voice_turn_artifacts,
+        synthesize_speech,
+        transcribe_file,
+        voice_turn_paths,
+    )
+
+    policy = policy or load_story_blanket_policy()
+    voice_config = voice_config or load_voice_config(voice_config_path)
+
+    transcript = transcribe_file(audio_path, config=voice_config, config_path=voice_config_path)
+    result = process_fragment(
+        paths,
+        transcript.text,
+        session,
+        bible,
+        policy=policy,
+        auto_confirm=auto_confirm,
+        non_interactive=non_interactive,
+    )
+
+    turn_no = result["turn"]["turn"]
+    artifacts = voice_turn_paths(paths.voice, turn_no)
+    persist_voice_turn_artifacts(
+        artifacts,
+        transcript=transcript.text,
+        agent_reply=result["agent_reply"],
+        input_audio=audio_path,
+    )
+    tts_text = build_tts_summary(result["agent_reply"], voice_config)
+    speak = synthesize_speech(tts_text, artifacts["reply_audio"], config=voice_config)
+
+    return {
+        "story_id": paths.root.name,
+        "transcript": transcript.text,
+        "asr_model": transcript.model,
+        "result": result,
+        "applied": result["applied"],
+        "agent_reply": result["agent_reply"],
+        "tts_model": speak.model,
+        "reply_audio": speak.output_path,
+        "reply_text": speak.text,
+        "artifacts": {key: str(value) for key, value in artifacts.items()},
+        "session": result["session"],
+        "bible": result["bible"],
+    }
+
+
 def run_story_voice_tell(
     story_root: Path,
     story_id: str | None = None,
