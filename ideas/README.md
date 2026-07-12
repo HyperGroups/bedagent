@@ -12,6 +12,7 @@
 | [voice-first](voice-first/) | candidate | 是否先从低屏幕语音入口做 MVP？ |
 | [sandbox-first](sandbox-first/) | candidate | 是否先从执行沙盒和 worktree 闭环做 MVP？ |
 | [mobile-bedside](mobile-bedside/) | candidate | 是否需要床边手机/旧设备作为控制器？ |
+| [bed-storytelling](bed-storytelling/) | candidate | 能否用口述闭环躺着写小说（vibe storytelling）？ |
 
 ## 状态说明
 

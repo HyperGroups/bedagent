@@ -115,6 +115,36 @@ python3 mvp/bedagent_mvp.py worktree retention-report \
   --output-json .bedagent/reports/retention-report.json
 ```
 
+Oral storytelling (vibe storytelling — lie in bed and tell the story piece by piece):
+
+```bash
+# Interactive oral loop (multi-line fragment, blank line to send)
+python3 mvp/bedagent_mvp.py story tell --title "会做梦的维修AI"
+
+# Seed first fragment, then continue interactively
+python3 mvp/bedagent_mvp.py story tell \
+  --title "会做梦的维修AI" \
+  --seed-file mvp/sample_story_seed.txt
+
+# Single fragment (script-friendly)
+python3 mvp/bedagent_mvp.py story once \
+  --title "会做梦的维修AI" \
+  --fragment-file mvp/sample_story_seed.txt
+
+# Recap story bible
+python3 mvp/bedagent_mvp.py story recap --story-id <session-id>
+```
+
+Story sessions are written to:
+
+```text
+.bedagent/stories/<session-id>/
+  bible.json
+  fragments.ndjson
+  turns.ndjson
+  session.json
+```
+
 ## Key runtime flags
 
 - `--blanket-policy`: blanket policy JSON file path.
@@ -128,6 +158,7 @@ python3 mvp/bedagent_mvp.py worktree retention-report \
 - `memory-search` supports `--risk-level`, `--act-status`, `--since` pre-filters.
 - `memory-search` supports `--min-score` and `--explain` for result control.
 - `validate-explain` subcommand: validates `policy_explain` schema and required fields.
+- `story` subcommand: oral storytelling loop (`tell`, `once`, `recap`) with story bible artifacts.
 
 ## Output artifacts
 

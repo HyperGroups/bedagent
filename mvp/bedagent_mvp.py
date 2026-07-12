@@ -1215,6 +1215,36 @@ def parse_args() -> argparse.Namespace:
         help="expected policy_explain schema version",
     )
 
+    story = sub.add_parser("story", help="oral storytelling loop (口述写故事)")
+    story.add_argument(
+        "action",
+        choices=["tell", "once", "recap"],
+        help="tell=interactive loop, once=single fragment, recap=review bible",
+    )
+    story.add_argument("--title", help="story title for a new session")
+    story.add_argument(
+        "--story-root",
+        default=".bedagent/stories",
+        help="directory where story sessions are stored",
+    )
+    story.add_argument(
+        "--story-id",
+        help="existing story session id (directory name under story-root)",
+    )
+    story.add_argument("--fragment", help="single oral fragment text (once action)")
+    story.add_argument(
+        "--fragment-file",
+        help="path to a text file containing one oral fragment (once action)",
+    )
+    story.add_argument(
+        "--seed-file",
+        help="optional seed fragment file before interactive tell loop",
+    )
+    story.add_argument(
+        "--output-json",
+        help="optional path to write session/turn/recap JSON",
+    )
+
     return parser.parse_args()
 
 
@@ -1390,6 +1420,94 @@ def main() -> int:
         for err in errors:
             print(f"- error: {err}")
         return 0 if ok else 1
+
+    if args.command == "story":
+        import sys
+
+        mvp_dir = Path(__file__).resolve().parent
+        if str(mvp_dir) not in sys.path:
+            sys.path.insert(0, str(mvp_dir))
+        from story_session import (
+            StoryPaths,
+            build_story_recap,
+            load_story_state,
+            print_story_recap,
+            process_fragment,
+            resolve_story_paths,
+            run_story_tell,
+        )
+
+        story_root = Path(args.story_root)
+
+        if args.action == "tell":
+            seed = None
+            if args.seed_file:
+                seed = Path(args.seed_file).read_text(encoding="utf-8").strip()
+            recap = run_story_tell(
+                story_root=story_root,
+                story_id=args.story_id,
+                title=args.title,
+                seed_fragment=seed,
+            )
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps(recap, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"session_json: {output_path}")
+            return 0
+
+        paths = resolve_story_paths(story_root, args.story_id, args.title)
+        if args.action == "recap":
+            if not paths.root.exists():
+                print(f"Input error: story session not found at {paths.root}")
+                return 2
+            session, bible = load_story_state(paths, args.title)
+            recap = build_story_recap(bible, session)
+            print_story_recap(recap)
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps(recap, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"recap_json: {output_path}")
+            return 0
+
+        if args.action == "once":
+            if bool(args.fragment) == bool(args.fragment_file):
+                print("Input error: provide exactly one of --fragment or --fragment-file for story once.")
+                return 2
+            fragment = args.fragment
+            if args.fragment_file:
+                fragment = Path(args.fragment_file).read_text(encoding="utf-8").strip()
+            paths.root.mkdir(parents=True, exist_ok=True)
+            session, bible = load_story_state(paths, args.title)
+            try:
+                result = process_fragment(paths, fragment or "", session, bible)
+            except ValueError as exc:
+                print(f"Input error: {exc}")
+                return 2
+            print("")
+            print("=== bedagent story once ===")
+            print(f"story_id: {paths.root.name}")
+            print(result["agent_reply"])
+            print("")
+            print(f"bible: {paths.bible}")
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps(result, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"turn_json: {output_path}")
+            return 0
+
+        raise ValueError(f"Unsupported story action: {args.action}")
 
     if args.command != "run":
         raise ValueError(f"Unsupported command: {args.command}")
