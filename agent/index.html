@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="bedagent Agent 入口 — 躺床口述写故事、MVP 闭环与语音控制。"
+    />
+    <title>bedagent Agent · 入口</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <link rel="stylesheet" href="./agent.css" />
+  </head>
+  <body class="agent-body">
+    <header class="agent-header">
+      <nav class="nav" aria-label="Agent navigation">
+        <a class="brand" href="../index.html" aria-label="bedagent home">
+          <span class="brand-mark">bed</span><span>agent</span>
+        </a>
+        <div class="nav-links">
+          <a href="../index.html">首页</a>
+          <a href="#modes">模式</a>
+          <a href="#console">控制台</a>
+        </div>
+      </nav>
+      <section class="agent-hero">
+        <p class="eyebrow">Agent Entry · D0.1</p>
+        <h1>躺着讲，<br />Agent 帮你对齐。</h1>
+        <p class="lead">
+          选择入口模式：口述写故事、MVP 闭环，或连接本地 API 做语音转写。
+          浏览器内可直接体验 Story 模式（数据保存在本机 localStorage）。
+        </p>
+      </section>
+    </header>
+
+    <main class="agent-main">
+      <section id="modes" class="section agent-section">
+        <div class="section-heading">
+          <p class="eyebrow">Choose Mode</p>
+          <h2>Agent 入口</h2>
+        </div>
+        <div class="mode-grid" role="tablist" aria-label="Agent modes">
+          <button class="mode-card active" type="button" data-mode="story" role="tab" aria-selected="true">
+            <span class="mode-icon">📖</span>
+            <h3>躺床写故事</h3>
+            <p>口述片段 → Sage 追问 → Focus 剪枝 → 故事 Bible</p>
+            <span class="mode-tag">浏览器可用</span>
+          </button>
+          <button class="mode-card" type="button" data-mode="mvp" role="tab" aria-selected="false">
+            <span class="mode-icon">⚙️</span>
+            <h3>MVP 闭环</h3>
+            <p>Capture → Sage → Blanket → Act Sandbox → Memory</p>
+            <span class="mode-tag">CLI / 本地 API</span>
+          </button>
+          <button class="mode-card" type="button" data-mode="voice" role="tab" aria-selected="false">
+            <span class="mode-icon">🎙️</span>
+            <h3>语音口述</h3>
+            <p>DashScope ASR/TTS · 需本地 bedagent_web 服务</p>
+            <span class="mode-tag">百炼 · 可选</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="console" class="section agent-section">
+        <div class="console-layout">
+          <div class="console-panel chat-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow" id="panel-mode-label">Story · 口述模式</p>
+                <h2 id="session-title">未命名故事</h2>
+              </div>
+              <div class="panel-actions">
+                <button class="button secondary small" type="button" id="btn-new-session">新故事</button>
+                <button class="button secondary small" type="button" id="btn-export-md">导出 MD</button>
+                <button class="button secondary small" type="button" id="btn-export-json">导出 JSON</button>
+              </div>
+            </div>
+
+            <div id="transcript" class="transcript" aria-live="polite"></div>
+
+            <div id="story-controls" class="input-area">
+              <label class="sr-only" for="fragment-input">口述片段</label>
+              <textarea
+                id="fragment-input"
+                rows="4"
+                placeholder="像 vibe coding 一样讲：碎片、跳跃、重复都没关系…"
+              ></textarea>
+              <div class="input-actions">
+                <button class="button primary" type="button" id="btn-send-fragment">发送口述</button>
+                <button class="button secondary" type="button" id="btn-send-answer">对齐回答</button>
+              </div>
+            </div>
+
+            <div id="mvp-controls" class="input-area hidden">
+              <p class="hint">
+                MVP 闭环请在终端运行：
+                <code>python3 mvp/bedagent_mvp.py run --idea "..." --auto-confirm</code>
+              </p>
+              <label class="sr-only" for="mvp-idea">任务想法</label>
+              <textarea id="mvp-idea" rows="3" placeholder="输入任务想法，通过本地 API 触发 run…"></textarea>
+              <div class="input-actions">
+                <button class="button primary" type="button" id="btn-mvp-run">调用本地 API</button>
+              </div>
+              <p class="hint" id="api-base-hint">API: 未连接（启动 <code>python3 mvp/bedagent_web.py</code>）</p>
+            </div>
+
+            <div id="voice-controls" class="input-area hidden">
+              <p class="hint">录音后通过本地 API 调用 DashScope ASR，再进入 Story 流程。</p>
+              <div class="voice-row">
+                <button class="button primary" type="button" id="btn-record">🎙 录音</button>
+                <span id="record-status" class="record-status">就绪</span>
+              </div>
+              <audio id="playback" controls class="hidden"></audio>
+              <div class="input-actions">
+                <button class="button secondary" type="button" id="btn-voice-transcribe">转写并发送</button>
+              </div>
+            </div>
+          </div>
+
+          <aside class="console-panel bible-panel">
+            <div class="panel-head">
+              <p class="eyebrow">Story Bible</p>
+              <h2>当前状态</h2>
+            </div>
+            <dl class="bible-stats">
+              <div><dt>回合</dt><dd id="stat-turns">0</dd></div>
+              <div><dt>待对齐</dt><dd id="stat-open">0</dd></div>
+              <div><dt>人物</dt><dd id="stat-chars">0</dd></div>
+            </dl>
+            <div class="bible-block">
+              <h3>主线</h3>
+              <p id="bible-main-thread" class="bible-text">（等待第一段口述）</p>
+            </div>
+            <div class="bible-block">
+              <h3>人物卡</h3>
+              <ul id="bible-characters" class="bible-list"></ul>
+            </div>
+            <div class="bible-block">
+              <h3>活跃线索</h3>
+              <ul id="bible-threads" class="bible-list"></ul>
+            </div>
+            <div class="bible-block">
+              <h3>待对齐问题</h3>
+              <ul id="bible-questions" class="bible-list"></ul>
+            </div>
+            <div class="bible-block">
+              <h3>时间线</h3>
+              <ul id="bible-timeline" class="bible-list timeline"></ul>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section agent-section contrast api-section">
+        <div class="split">
+          <div>
+            <p class="eyebrow">Local API</p>
+            <h2>语音与 MVP 需要本地服务。</h2>
+            <p>
+              GitHub Pages 是纯静态站点。运行
+              <code>python3 mvp/bedagent_web.py --port 8765</code>
+              后，此页面会自动连接 <code>http://127.0.0.1:8765</code> 处理语音转写与 MVP run。
+            </p>
+          </div>
+          <div class="api-status card" id="api-status-card">
+            <p class="api-status-label">API 状态</p>
+            <p class="api-status-value" id="api-status">检测中…</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>bedagent Agent · 懒有书，事有智者，动手有沙盒。</p>
+    </footer>
+
+    <script type="module" src="./story-engine.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
