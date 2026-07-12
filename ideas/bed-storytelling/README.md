@@ -32,6 +32,9 @@ bedagent 的一个妙用：**躺在床上写小说**。
 # 交互口述（多行，空行发送）
 python3 mvp/bedagent_mvp.py story tell --title "会做梦的维修AI"
 
+# 恢复已有 session
+python3 mvp/bedagent_mvp.py story tell --story-id <session-id>
+
 # 先用 seed 文件开讲，再进入交互
 python3 mvp/bedagent_mvp.py story tell \
   --title "会做梦的维修AI" \
@@ -40,17 +43,43 @@ python3 mvp/bedagent_mvp.py story tell \
 # 单段口述（脚本 / 测试友好）
 python3 mvp/bedagent_mvp.py story once \
   --title "会做梦的维修AI" \
-  --fragment-file mvp/sample_story_seed.txt
+  --fragment-file mvp/sample_story_seed.txt \
+  --auto-confirm
 
-# 回顾当前 bible
-python3 mvp/bedagent_mvp.py story recap --story-id <session-id>
+# 回答 Sage 追问（对齐）
+python3 mvp/bedagent_mvp.py story answer \
+  --story-id <session-id> \
+  --answer-file mvp/sample_story_answer.txt
+
+# 生成章节草图（Act 沙盒）
+python3 mvp/bedagent_mvp.py story draft --story-id <session-id>
+
+# 导出 markdown 大纲 + 对话 transcript
+python3 mvp/bedagent_mvp.py story export --story-id <session-id>
+
+# 列出所有 story session
+python3 mvp/bedagent_mvp.py story list
 ```
+
+交互模式命令（`story tell` 内）：
+
+| 命令 | 作用 |
+|------|------|
+| `/answer` | 回复 Sage 待对齐问题 |
+| `/draft` | 生成章节草图 + 大纲 |
+| `/export` | 导出 markdown |
+| `/questions` | 查看待对齐问题 |
+| `/recap` | 床边回顾 |
 
 产物目录：`.bedagent/stories/<session-id>/`
 
-- `bible.json` — 主线、人物、线索、开放问题
+- `bible.json` — 主线、人物、线索、时间线、开放/已对齐问题
 - `fragments.ndjson` — 原始口述
-- `turns.ndjson` — 每轮 Sage/Focus/Agent 回复
+- `turns.ndjson` — 每轮 Sage/Focus/Blanket/Agent 对话
+- `drafts/` — 章节草图、大纲、pillow 短摘要
+- `exports/` — 导出的 story-bible.md、transcript.md
+
+大改确认策略：`mvp/story_blanket_policy.json`（主线 pivot、删角色、重写等）
 
 ## 为什么值得想
 
@@ -74,6 +103,7 @@ story 模式作为 **平行情景适配器** 验证控制层可迁移性，不�
 ## 下一步
 
 1. Voice 适配器：把 `--fragment` 换成语音转写流；
-2. 章节 Act 沙盒：把 `expand` 线索落成 `drafts/chapter-N.md`；
-3. Blanket 策略：删人设 / 改主线等「红色」改动必须确认；
-4. embedding 检索：跨故事会话找相似伏笔。
+2. ~~章节 Act 沙盒：把 `expand` 线索落成 `drafts/chapter-N.md`~~ ✅ `story draft`
+3. ~~Blanket 策略：删人设 / 改主线等「红色」改动必须确认~~ ✅ `story_blanket_policy.json`
+4. embedding 检索：跨故事会话找相似伏笔；
+5. LLM 适配器：可选接入模型增强 Sage 追问与章节扩写（保持控制层不变）。

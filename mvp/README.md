@@ -121,6 +121,9 @@ Oral storytelling (vibe storytelling — lie in bed and tell the story piece by 
 # Interactive oral loop (multi-line fragment, blank line to send)
 python3 mvp/bedagent_mvp.py story tell --title "会做梦的维修AI"
 
+# Resume an existing session
+python3 mvp/bedagent_mvp.py story tell --story-id <session-id>
+
 # Seed first fragment, then continue interactively
 python3 mvp/bedagent_mvp.py story tell \
   --title "会做梦的维修AI" \
@@ -129,11 +132,31 @@ python3 mvp/bedagent_mvp.py story tell \
 # Single fragment (script-friendly)
 python3 mvp/bedagent_mvp.py story once \
   --title "会做梦的维修AI" \
-  --fragment-file mvp/sample_story_seed.txt
+  --fragment-file mvp/sample_story_seed.txt \
+  --auto-confirm
 
-# Recap story bible
-python3 mvp/bedagent_mvp.py story recap --story-id <session-id>
+# Answer Sage alignment questions
+python3 mvp/bedagent_mvp.py story answer \
+  --story-id <session-id> \
+  --answer-file mvp/sample_story_answer.txt
+
+# Generate chapter sketch + outline (Act sandbox)
+python3 mvp/bedagent_mvp.py story draft --story-id <session-id>
+
+# Export markdown bible + transcript
+python3 mvp/bedagent_mvp.py story export --story-id <session-id>
+
+# List sessions
+python3 mvp/bedagent_mvp.py story list
 ```
+
+Interactive commands inside `story tell`:
+
+- `/answer` — reply to Sage open questions
+- `/draft` — write `drafts/chapter-NN-sketch.md` and `drafts/outline.md`
+- `/export` — write `exports/story-bible.md` and `exports/transcript.md`
+- `/questions` — show pending alignment questions
+- `/recap` — bedside recap
 
 Story sessions are written to:
 
@@ -143,7 +166,11 @@ Story sessions are written to:
   fragments.ndjson
   turns.ndjson
   session.json
+  drafts/
+  exports/
 ```
+
+Blanket policy for major story pivots: `mvp/story_blanket_policy.json`
 
 ## Key runtime flags
 
@@ -158,7 +185,7 @@ Story sessions are written to:
 - `memory-search` supports `--risk-level`, `--act-status`, `--since` pre-filters.
 - `memory-search` supports `--min-score` and `--explain` for result control.
 - `validate-explain` subcommand: validates `policy_explain` schema and required fields.
-- `story` subcommand: oral storytelling loop (`tell`, `once`, `recap`) with story bible artifacts.
+- `story` subcommand: oral storytelling loop (`tell`, `once`, `recap`, `answer`, `draft`, `export`, `list`) with bible, blanket, and draft sandbox.
 
 ## Output artifacts
 

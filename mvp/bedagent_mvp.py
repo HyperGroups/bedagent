@@ -1218,8 +1218,8 @@ def parse_args() -> argparse.Namespace:
     story = sub.add_parser("story", help="oral storytelling loop (口述写故事)")
     story.add_argument(
         "action",
-        choices=["tell", "once", "recap"],
-        help="tell=interactive loop, once=single fragment, recap=review bible",
+        choices=["tell", "once", "recap", "answer", "draft", "export", "list"],
+        help="tell=interactive, once=single fragment, recap/draft/export/list, answer=align with Sage",
     )
     story.add_argument("--title", help="story title for a new session")
     story.add_argument(
@@ -1243,6 +1243,29 @@ def parse_args() -> argparse.Namespace:
     story.add_argument(
         "--output-json",
         help="optional path to write session/turn/recap JSON",
+    )
+    story.add_argument(
+        "--blanket-policy",
+        default="mvp/story_blanket_policy.json",
+        help="story blanket policy JSON for major pivots",
+    )
+    story.add_argument(
+        "--auto-confirm",
+        action="store_true",
+        help="auto-approve yellow/red story changes",
+    )
+    story.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="never prompt; deny unconfirmed story changes unless --auto-confirm",
+    )
+    story.add_argument(
+        "--answer",
+        help="alignment answer text (story answer action)",
+    )
+    story.add_argument(
+        "--answer-file",
+        help="path to alignment answer text (story answer action)",
     )
 
     return parser.parse_args()
@@ -1429,15 +1452,44 @@ def main() -> int:
             sys.path.insert(0, str(mvp_dir))
         from story_session import (
             StoryPaths,
+            build_story_drafts,
             build_story_recap,
+            export_story,
+            list_story_sessions,
+            load_story_blanket_policy,
             load_story_state,
             print_story_recap,
+            process_answer,
             process_fragment,
             resolve_story_paths,
             run_story_tell,
         )
 
         story_root = Path(args.story_root)
+        story_policy = load_story_blanket_policy(Path(args.blanket_policy))
+
+        if args.action == "list":
+            items = list_story_sessions(story_root)
+            print("")
+            print("=== bedagent story list ===")
+            if not items:
+                print("(no sessions)")
+            for item in items:
+                print(
+                    f"- {item['story_id']}: {item['title']} "
+                    f"(turns={item['turn_count']}, updated={item['updated_at']})"
+                )
+                if item.get("main_thread"):
+                    print(f"  main: {item['main_thread']}")
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps({"items": items}, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"list_json: {output_path}")
+            return 0
 
         if args.action == "tell":
             seed = None
@@ -1448,6 +1500,9 @@ def main() -> int:
                 story_id=args.story_id,
                 title=args.title,
                 seed_fragment=seed,
+                policy=story_policy,
+                auto_confirm=args.auto_confirm,
+                non_interactive=args.non_interactive,
             )
             if args.output_json:
                 output_path = Path(args.output_json)
@@ -1487,13 +1542,22 @@ def main() -> int:
             paths.root.mkdir(parents=True, exist_ok=True)
             session, bible = load_story_state(paths, args.title)
             try:
-                result = process_fragment(paths, fragment or "", session, bible)
+                result = process_fragment(
+                    paths,
+                    fragment or "",
+                    session,
+                    bible,
+                    policy=story_policy,
+                    auto_confirm=args.auto_confirm,
+                    non_interactive=args.non_interactive,
+                )
             except ValueError as exc:
                 print(f"Input error: {exc}")
                 return 2
             print("")
             print("=== bedagent story once ===")
             print(f"story_id: {paths.root.name}")
+            print(f"applied: {result['applied']}")
             print(result["agent_reply"])
             print("")
             print(f"bible: {paths.bible}")
@@ -1505,6 +1569,74 @@ def main() -> int:
                     encoding="utf-8",
                 )
                 print(f"turn_json: {output_path}")
+            return 0
+
+        if args.action == "answer":
+            if bool(args.answer) == bool(args.answer_file):
+                print("Input error: provide exactly one of --answer or --answer-file for story answer.")
+                return 2
+            if not paths.root.exists():
+                print(f"Input error: story session not found at {paths.root}")
+                return 2
+            answer = args.answer
+            if args.answer_file:
+                answer = Path(args.answer_file).read_text(encoding="utf-8").strip()
+            session, bible = load_story_state(paths, args.title)
+            try:
+                result = process_answer(paths, answer or "", session, bible)
+            except ValueError as exc:
+                print(f"Input error: {exc}")
+                return 2
+            print("")
+            print("=== bedagent story answer ===")
+            print(f"story_id: {paths.root.name}")
+            print(result["agent_reply"])
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps(result, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"answer_json: {output_path}")
+            return 0
+
+        if args.action == "draft":
+            if not paths.root.exists():
+                print(f"Input error: story session not found at {paths.root}")
+                return 2
+            session, bible = load_story_state(paths, args.title)
+            result = build_story_drafts(paths, bible, session)
+            print("")
+            print("=== bedagent story draft ===")
+            print(f"story_id: {paths.root.name}")
+            print(f"chapter: {result['chapter_number']}")
+            print(f"outline: {result['outline_path']}")
+            print(f"sketch: {result['chapter_sketch_path']}")
+            print(f"pillow: {result['pillow_note_path']}")
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                print(f"draft_json: {output_path}")
+            return 0
+
+        if args.action == "export":
+            if not paths.root.exists():
+                print(f"Input error: story session not found at {paths.root}")
+                return 2
+            session, bible = load_story_state(paths, args.title)
+            result = export_story(paths, bible, session)
+            print("")
+            print("=== bedagent story export ===")
+            print(f"story_id: {paths.root.name}")
+            print(f"bible: {result['story_bible_path']}")
+            print(f"transcript: {result['transcript_path']}")
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                print(f"export_json: {output_path}")
             return 0
 
         raise ValueError(f"Unsupported story action: {args.action}")

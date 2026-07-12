@@ -9,7 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-STORY_FLOW = "Oral Capture -> Sage -> Focus -> Synthesize -> Dialogue -> Bible -> Memory"
+STORY_FLOW = (
+    "Oral Capture -> Sage -> Focus -> Blanket -> Synthesize -> Dialogue -> "
+    "Draft Sandbox -> Bible -> Memory"
+)
+BIBLE_SCHEMA_VERSION = "1.0.0"
+DEFAULT_STORY_POLICY_PATH = Path(__file__).with_name("story_blanket_policy.json")
 
 STORY_CATEGORIES = ("character", "plot", "world", "dialogue", "theme", "misc")
 
@@ -82,6 +87,10 @@ def first_sentence(value: str, max_len: int = 140) -> str:
     return summary[: max_len - 3].rstrip() + "..."
 
 
+def token_set(value: str) -> set[str]:
+    return set(re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z]{4,}", value.lower()))
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -99,8 +108,21 @@ def load_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_story_blanket_policy(path: Path | None = None) -> dict[str, Any]:
+    policy_path = path or DEFAULT_STORY_POLICY_PATH
+    payload = json.loads(policy_path.read_text(encoding="utf-8"))
+    payload.setdefault("red_keywords", [])
+    payload.setdefault("yellow_keywords", [])
+    payload.setdefault("require_confirmation_by_risk", {"green": False, "yellow": True, "red": True})
+    payload.setdefault("require_confirmation_on_main_thread_pivot", True)
+    payload.setdefault("main_thread_pivot_min_turns", 2)
+    payload.setdefault("allow_auto_confirm_red", False)
+    return payload
+
+
 def empty_bible(title: str = "未命名故事") -> dict[str, Any]:
     return {
+        "schema_version": BIBLE_SCHEMA_VERSION,
         "title": title,
         "created_at": now_iso(),
         "updated_at": now_iso(),
@@ -108,11 +130,25 @@ def empty_bible(title: str = "未命名故事") -> dict[str, Any]:
         "characters": [],
         "plot_threads": [],
         "setting": {"time": "", "place": "", "notes": []},
+        "timeline": [],
         "open_questions": [],
+        "resolved_questions": [],
         "recent_recap": "",
         "fragment_count": 0,
         "turn_count": 0,
+        "drafts": {"chapter_count": 0, "last_draft_at": "", "last_export_at": ""},
     }
+
+
+def ensure_bible_schema(bible: dict[str, Any]) -> dict[str, Any]:
+    merged = empty_bible(bible.get("title", "未命名故事"))
+    merged.update(bible)
+    if not merged.get("setting"):
+        merged["setting"] = {"time": "", "place": "", "notes": []}
+    if not merged.get("drafts"):
+        merged["drafts"] = {"chapter_count": 0, "last_draft_at": "", "last_export_at": ""}
+    merged["schema_version"] = BIBLE_SCHEMA_VERSION
+    return merged
 
 
 def default_session(title: str = "未命名故事") -> dict[str, Any]:
@@ -173,9 +209,7 @@ def classify_story_focus_action(thread: str, main_thread: str) -> str:
         return "prune"
     if any(k in thread_l for k in ("也许", "可能", "或者", "maybe", "perhaps", "someday")):
         return "park"
-    shared = set(re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z]{4,}", thread_l)) & set(
-        re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z]{4,}", main_l)
-    )
+    shared = token_set(thread_l) & token_set(main_l)
     if len(shared) >= 2:
         return "expand"
     if len(shared) == 1:
@@ -185,14 +219,122 @@ def classify_story_focus_action(thread: str, main_thread: str) -> str:
     return "park"
 
 
+def propose_main_thread(fragment: str, bible: dict[str, Any], category: str) -> str:
+    recap = first_sentence(fragment)
+    current = bible.get("main_thread") or "（等待第一段口述）"
+    if current.startswith("（等待"):
+        return recap
+    if category in {"plot", "character", "theme"}:
+        return recap
+    return current
+
+
+def detect_main_thread_pivot(old_thread: str, new_thread: str) -> bool:
+    if old_thread.startswith("（等待"):
+        return False
+    old_tokens = token_set(old_thread)
+    new_tokens = token_set(new_thread)
+    if not old_tokens or not new_tokens:
+        return False
+    overlap = len(old_tokens & new_tokens) / max(len(old_tokens | new_tokens), 1)
+    return overlap < 0.25
+
+
+def classify_story_blanket_risk(
+    fragment: str,
+    bible: dict[str, Any],
+    proposed_main_thread: str,
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    lowered = fragment.lower()
+    red_hits = sorted(k for k in policy["red_keywords"] if k.lower() in lowered)
+    yellow_hits = sorted(k for k in policy["yellow_keywords"] if k.lower() in lowered)
+    pivot = False
+    oral_main = first_sentence(fragment)
+    if policy.get("require_confirmation_on_main_thread_pivot") and int(bible.get("turn_count", 0)) >= int(
+        policy.get("main_thread_pivot_min_turns", 2)
+    ):
+        pivot = detect_main_thread_pivot(bible.get("main_thread", ""), oral_main) or detect_main_thread_pivot(
+            bible.get("main_thread", ""), proposed_main_thread
+        )
+
+    if red_hits:
+        level = "red"
+        reason = f"story-breaking keywords: {', '.join(red_hits)}"
+    elif yellow_hits or pivot:
+        level = "yellow"
+        parts = []
+        if yellow_hits:
+            parts.append(f"change keywords: {', '.join(yellow_hits)}")
+        if pivot:
+            parts.append("main thread pivot detected")
+        reason = "; ".join(parts)
+    else:
+        level = "green"
+        reason = "routine oral fragment"
+
+    return {
+        "level": level,
+        "reason": reason,
+        "red_hits": red_hits,
+        "yellow_hits": yellow_hits,
+        "main_thread_pivot": pivot,
+        "proposed_main_thread": proposed_main_thread,
+    }
+
+
+def stage_story_blanket(risk: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    level = risk["level"]
+    confirmation = policy["require_confirmation_by_risk"].get(level, True)
+    return {
+        "risk_level": level,
+        "risk_reason": risk["reason"],
+        "requires_confirmation": confirmation,
+        "allow_auto_confirm_red": policy.get("allow_auto_confirm_red", False),
+        "main_thread_pivot": risk["main_thread_pivot"],
+    }
+
+
+def confirm_story_blanket(
+    blanket: dict[str, Any],
+    risk: dict[str, Any],
+    auto_confirm: bool,
+    non_interactive: bool,
+    input_fn: Callable[[str], str] = input,
+) -> dict[str, Any]:
+    level = blanket["risk_level"]
+    if not blanket["requires_confirmation"]:
+        return {"approved": True, "mode": "policy_no_confirmation", "risk_level": level}
+    if auto_confirm:
+        if level == "red" and not blanket["allow_auto_confirm_red"]:
+            return {
+                "approved": False,
+                "mode": "policy_blocked_auto_confirm_red",
+                "risk_level": level,
+            }
+        return {"approved": True, "mode": "auto_confirm", "risk_level": level}
+    if non_interactive:
+        return {"approved": False, "mode": "non_interactive_default_deny", "risk_level": level}
+
+    print("")
+    print("=== bedagent story blanket ===")
+    print(f"Risk level: {level}")
+    print(f"Reason: {blanket['risk_reason']}")
+    if risk.get("main_thread_pivot"):
+        print(f"Proposed main thread: {risk['proposed_main_thread']}")
+    if level == "red":
+        print('大改需要明确确认。Type "YES" to continue: ', end="", flush=True)
+        approved = input_fn("").strip() == "YES"
+    else:
+        print("Apply this story change? [y/N]: ", end="", flush=True)
+        approved = input_fn("").strip().lower() == "y"
+    return {"approved": approved, "mode": "interactive", "risk_level": level}
+
+
 def stage_story_sage(fragment: str, bible: dict[str, Any]) -> dict[str, Any]:
     category = detect_story_category(fragment)
     recap = first_sentence(fragment)
-    main_thread = bible.get("main_thread") or "（等待第一段口述）"
-    if main_thread.startswith("（等待"):
-        main_thread = recap
-    elif category in {"plot", "character", "theme"}:
-        main_thread = recap
+    main_thread = propose_main_thread(fragment, bible, category)
 
     questions = [
         "这段口述改变了主线冲突吗？",
@@ -250,14 +392,18 @@ def upsert_plot_thread(bible: dict[str, Any], label: str, action: str, note: str
 
 
 def stage_story_synthesize(
-    fragment: str, sage: dict[str, Any], focus: dict[str, Any], bible: dict[str, Any]
+    fragment: str,
+    sage: dict[str, Any],
+    focus: dict[str, Any],
+    bible: dict[str, Any],
+    turn_number: int,
 ) -> dict[str, Any]:
-    updated = json.loads(json.dumps(bible, ensure_ascii=False))
+    updated = ensure_bible_schema(json.loads(json.dumps(bible, ensure_ascii=False)))
     updated["main_thread"] = sage["main_thread"]
     updated["updated_at"] = now_iso()
     updated["recent_recap"] = sage["recap"]
     updated["fragment_count"] = int(updated.get("fragment_count", 0)) + 1
-    updated["turn_count"] = int(updated.get("turn_count", 0)) + 1
+    updated["turn_count"] = turn_number
 
     for name in extract_character_hints(fragment):
         upsert_character(updated, name, sage["recap"])
@@ -273,6 +419,18 @@ def stage_story_synthesize(
         if sage["recap"] not in updated["setting"]["notes"]:
             updated["setting"]["notes"].append(sage["recap"])
             updated["setting"]["notes"] = updated["setting"]["notes"][-8:]
+
+    timeline = list(updated.get("timeline", []))
+    timeline.append(
+        {
+            "turn": turn_number,
+            "recorded_at": now_iso(),
+            "kind": "fragment",
+            "category": category,
+            "text": sage["recap"],
+        }
+    )
+    updated["timeline"] = timeline[-40:]
 
     open_questions = list(updated.get("open_questions", []))
     for question in sage["key_questions"]:
@@ -301,12 +459,22 @@ def format_focus_line(focus: dict[str, Any]) -> str:
     return " · ".join(parts) if parts else "（暂无分支变化）"
 
 
-def build_agent_reply(sage: dict[str, Any], focus: dict[str, Any], bible: dict[str, Any]) -> str:
-    lines = [
-        f"我听懂了：{sage['recap']}",
-        "",
-        "Sage 想和你对齐：",
-    ]
+def build_agent_reply(
+    sage: dict[str, Any],
+    focus: dict[str, Any],
+    bible: dict[str, Any],
+    blanket: dict[str, Any] | None = None,
+    confirm: dict[str, Any] | None = None,
+) -> str:
+    lines = [f"我听懂了：{sage['recap']}", ""]
+    if blanket and blanket["risk_level"] != "green":
+        lines.append(f"Blanket：{blanket['risk_level']} — {blanket['risk_reason']}")
+        if confirm and not confirm.get("approved"):
+            lines.append("（改动未写入 bible，请确认后重试或使用 /answer 对齐）")
+            lines.append("")
+            return "\n".join(lines)
+
+    lines.append("Sage 想和你对齐：")
     for idx, question in enumerate(sage["key_questions"], start=1):
         lines.append(f"  {idx}. {question}")
     lines.extend(
@@ -321,7 +489,8 @@ def build_agent_reply(sage: dict[str, Any], focus: dict[str, Any], bible: dict[s
         names = "、".join(item["name"] for item in bible["characters"][:6])
         lines.append(f"人物卡：{names}")
     if bible.get("open_questions"):
-        lines.append(f"待回答：{len(bible['open_questions'])} 条")
+        lines.append(f"待回答：{len(bible['open_questions'])} 条（可用 /answer 回复）")
+    lines.append("命令：/answer /draft /export /recap /questions /quit")
     return "\n".join(lines)
 
 
@@ -345,6 +514,14 @@ class StoryPaths:
     def turns(self) -> Path:
         return self.root / "turns.ndjson"
 
+    @property
+    def drafts(self) -> Path:
+        return self.root / "drafts"
+
+    @property
+    def exports(self) -> Path:
+        return self.root / "exports"
+
 
 def resolve_story_paths(story_root: Path, story_id: str | None, title: str | None) -> StoryPaths:
     if story_id:
@@ -358,11 +535,21 @@ def resolve_story_paths(story_root: Path, story_id: str | None, title: str | Non
 
 def load_story_state(paths: StoryPaths, title: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
     session = load_json(paths.session, default_session(title or "未命名故事"))
-    bible = load_json(paths.bible, empty_bible(session.get("title", title or "未命名故事")))
+    bible = ensure_bible_schema(load_json(paths.bible, empty_bible(session.get("title", title or "未命名故事"))))
     if title:
         session["title"] = title
         bible["title"] = title
     return session, bible
+
+
+def load_turns(paths: StoryPaths) -> list[dict[str, Any]]:
+    if not paths.turns.exists():
+        return []
+    rows = []
+    for line in paths.turns.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    return rows
 
 
 def process_fragment(
@@ -370,46 +557,359 @@ def process_fragment(
     fragment: str,
     session: dict[str, Any],
     bible: dict[str, Any],
+    policy: dict[str, Any] | None = None,
+    auto_confirm: bool = False,
+    non_interactive: bool = False,
+    input_fn: Callable[[str], str] = input,
 ) -> dict[str, Any]:
     text = normalize_fragment(fragment)
     if not text:
         raise ValueError("口述片段不能为空。")
 
+    policy = policy or load_story_blanket_policy()
+    bible = ensure_bible_schema(bible)
     sage = stage_story_sage(text, bible)
     focus = stage_story_focus(text, sage)
-    updated_bible = stage_story_synthesize(text, sage, focus, bible)
-    agent_reply = build_agent_reply(sage, focus, updated_bible)
+    risk = classify_story_blanket_risk(text, bible, sage["main_thread"], policy)
+    blanket = stage_story_blanket(risk, policy)
+    confirm = confirm_story_blanket(blanket, risk, auto_confirm, non_interactive, input_fn=input_fn)
+
+    turn_number = int(session.get("turn_count", 0)) + 1
+    if confirm["approved"]:
+        updated_bible = stage_story_synthesize(text, sage, focus, bible, turn_number)
+    else:
+        updated_bible = bible
+
+    agent_reply = build_agent_reply(sage, focus, updated_bible, blanket=blanket, confirm=confirm)
 
     turn = {
-        "turn": int(session.get("turn_count", 0)) + 1,
+        "turn": turn_number,
         "recorded_at": now_iso(),
+        "kind": "fragment",
         "fragment": text,
         "sage": sage,
         "focus": focus,
+        "blanket": blanket,
+        "confirm": confirm,
         "agent_reply": agent_reply,
         "main_thread_after": updated_bible["main_thread"],
+        "applied": confirm["approved"],
     }
 
     session["updated_at"] = now_iso()
-    session["turn_count"] = turn["turn"]
-    session["fragment_count"] = updated_bible["fragment_count"]
+    if confirm["approved"]:
+        session["turn_count"] = turn_number
+        session["fragment_count"] = updated_bible["fragment_count"]
+        append_ndjson(paths.fragments, {"recorded_at": turn["recorded_at"], "fragment": text})
+        write_json(paths.bible, updated_bible)
+    else:
+        session["turn_count"] = turn_number
 
-    append_ndjson(paths.fragments, {"recorded_at": turn["recorded_at"], "fragment": text})
     append_ndjson(paths.turns, turn)
     write_json(paths.session, session)
-    write_json(paths.bible, updated_bible)
 
     return {
         "turn": turn,
         "session": session,
         "bible": updated_bible,
         "agent_reply": agent_reply,
+        "blanket": blanket,
+        "confirm": confirm,
+        "applied": confirm["approved"],
         "paths": {
             "root": str(paths.root),
             "session": str(paths.session),
             "bible": str(paths.bible),
         },
     }
+
+
+def process_answer(
+    paths: StoryPaths,
+    answer: str,
+    session: dict[str, Any],
+    bible: dict[str, Any],
+    resolve_count: int = 3,
+) -> dict[str, Any]:
+    text = normalize_fragment(answer)
+    if not text:
+        raise ValueError("对齐回答不能为空。")
+
+    bible = ensure_bible_schema(bible)
+    open_questions = list(bible.get("open_questions", []))
+    if not open_questions:
+        raise ValueError("当前没有待对齐问题。")
+
+    to_resolve = open_questions[-resolve_count:]
+    resolved_rows = list(bible.get("resolved_questions", []))
+    for question in to_resolve:
+        resolved_rows.append(
+            {"question": question, "answer": text, "resolved_at": now_iso(), "turn": session.get("turn_count", 0) + 1}
+        )
+    bible["resolved_questions"] = resolved_rows[-30:]
+    bible["open_questions"] = [q for q in open_questions if q not in to_resolve]
+    bible["updated_at"] = now_iso()
+
+    for name in extract_character_hints(text):
+        upsert_character(bible, name, text)
+
+    turn_number = int(session.get("turn_count", 0)) + 1
+    timeline = list(bible.get("timeline", []))
+    timeline.append(
+        {
+            "turn": turn_number,
+            "recorded_at": now_iso(),
+            "kind": "answer",
+            "category": "alignment",
+            "text": first_sentence(text),
+        }
+    )
+    bible["timeline"] = timeline[-40:]
+    bible["turn_count"] = turn_number
+    bible["recent_recap"] = first_sentence(text)
+
+    agent_reply = "\n".join(
+        [
+            f"收到对齐：{first_sentence(text)}",
+            "",
+            f"已消化 {len(to_resolve)} 条待对齐问题。",
+            f"剩余待回答：{len(bible['open_questions'])} 条",
+            "",
+            f"当前主线：{bible['main_thread']}",
+        ]
+    )
+
+    turn = {
+        "turn": turn_number,
+        "recorded_at": now_iso(),
+        "kind": "answer",
+        "answer": text,
+        "resolved_questions": to_resolve,
+        "agent_reply": agent_reply,
+        "applied": True,
+    }
+
+    session["updated_at"] = now_iso()
+    session["turn_count"] = turn_number
+    append_ndjson(paths.turns, turn)
+    write_json(paths.bible, bible)
+    write_json(paths.session, session)
+
+    return {
+        "turn": turn,
+        "session": session,
+        "bible": bible,
+        "agent_reply": agent_reply,
+        "resolved_questions": to_resolve,
+        "paths": {"root": str(paths.root), "bible": str(paths.bible)},
+    }
+
+
+def build_chapter_sketch(bible: dict[str, Any], chapter_number: int) -> str:
+    title = bible.get("title", "未命名故事")
+    active = [item for item in bible.get("plot_threads", []) if item.get("status") == "active"]
+    parked = [item for item in bible.get("plot_threads", []) if item.get("status") == "parked"]
+
+    lines = [
+        f"# {title} — 第 {chapter_number} 章草图",
+        "",
+        f"> 生成于 {now_iso()}",
+        "",
+        "## 本章目标",
+        f"- 推进主线：{bible.get('main_thread', '')}",
+        "",
+        "## 建议场景",
+    ]
+    if active:
+        for idx, item in enumerate(active[:5], start=1):
+            lines.append(f"{idx}. {item['label']}")
+    else:
+        lines.append("- （尚无活跃线索，继续口述一段情节）")
+
+    lines.extend(["", "## 人物状态"])
+    if bible.get("characters"):
+        for item in bible["characters"][:8]:
+            note = "；".join(item.get("notes", [])[:2]) or "待补充"
+            lines.append(f"- **{item['name']}**：{note}")
+    else:
+        lines.append("- （尚未建立人物卡）")
+
+    if parked:
+        lines.extend(["", "## 可埋伏笔（暂存）"])
+        for item in parked[:4]:
+            lines.append(f"- {item['label']}")
+
+    if bible.get("open_questions"):
+        lines.extend(["", "## 写之前先对齐"])
+        for question in bible["open_questions"][-5:]:
+            lines.append(f"- {question}")
+
+    lines.extend(["", "## 口述续写提示", "- 下一段可以直接从这里接着讲：场景、冲突、对白。"])
+    return "\n".join(lines) + "\n"
+
+
+def build_outline_markdown(bible: dict[str, Any], session: dict[str, Any]) -> str:
+    title = bible.get("title", session.get("title", "未命名故事"))
+    lines = [
+        f"# {title} — 故事大纲",
+        "",
+        f"- 回合：{session.get('turn_count', 0)}",
+        f"- 更新时间：{bible.get('updated_at', '')}",
+        "",
+        "## 主线",
+        bible.get("main_thread", ""),
+        "",
+    ]
+
+    setting = bible.get("setting", {})
+    if setting.get("place") or setting.get("time") or setting.get("notes"):
+        lines.extend(["## 世界", ""])
+        if setting.get("time"):
+            lines.append(f"- 时间：{setting['time']}")
+        if setting.get("place"):
+            lines.append(f"- 地点：{setting['place']}")
+        for note in setting.get("notes", [])[:6]:
+            lines.append(f"- {note}")
+        lines.append("")
+
+    if bible.get("characters"):
+        lines.extend(["## 人物", ""])
+        for item in bible["characters"]:
+            note = "；".join(item.get("notes", [])) or "待补充"
+            lines.append(f"- **{item['name']}**：{note}")
+        lines.append("")
+
+    threads = bible.get("plot_threads", [])
+    if threads:
+        lines.extend(["## 线索", ""])
+        for status in ("active", "parked", "merged"):
+            group = [item for item in threads if item.get("status") == status]
+            if not group:
+                continue
+            label = {"active": "活跃", "parked": "暂存", "merged": "已合并"}[status]
+            lines.append(f"### {label}")
+            for item in group[:10]:
+                lines.append(f"- {item['label']}")
+            lines.append("")
+
+    if bible.get("timeline"):
+        lines.extend(["## 时间线（口述摘要）", ""])
+        for item in bible["timeline"][-12:]:
+            kind = "口述" if item.get("kind") == "fragment" else "对齐"
+            lines.append(f"- [回合 {item.get('turn', '?')}/{kind}] {item.get('text', '')}")
+        lines.append("")
+
+    resolved = bible.get("resolved_questions", [])
+    if resolved:
+        lines.extend(["## 已对齐", ""])
+        for item in resolved[-8:]:
+            lines.append(f"- Q: {item['question']}")
+            lines.append(f"  A: {item['answer']}")
+        lines.append("")
+
+    if bible.get("open_questions"):
+        lines.extend(["## 待对齐", ""])
+        for question in bible["open_questions"]:
+            lines.append(f"- {question}")
+
+    return "\n".join(lines) + "\n"
+
+
+def build_transcript_markdown(paths: StoryPaths, session: dict[str, Any]) -> str:
+    turns = load_turns(paths)
+    title = session.get("title", "未命名故事")
+    lines = [f"# {title} — 口述 transcript", "", f"共 {len(turns)} 条记录", ""]
+    for turn in turns:
+        kind = turn.get("kind", "fragment")
+        lines.append(f"## 回合 {turn.get('turn', '?')} · {kind}")
+        lines.append(f"*{turn.get('recorded_at', '')}*")
+        lines.append("")
+        if kind == "fragment":
+            lines.append("**你：**")
+            lines.append("")
+            lines.append(turn.get("fragment", ""))
+        else:
+            lines.append("**对齐：**")
+            lines.append("")
+            lines.append(turn.get("answer", ""))
+        lines.append("")
+        lines.append("**Agent：**")
+        lines.append("")
+        lines.append(turn.get("agent_reply", ""))
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def build_story_drafts(paths: StoryPaths, bible: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+    bible = ensure_bible_schema(bible)
+    paths.drafts.mkdir(parents=True, exist_ok=True)
+
+    chapter_number = int(bible.get("drafts", {}).get("chapter_count", 0)) + 1
+    outline_path = paths.drafts / "outline.md"
+    chapter_path = paths.drafts / f"chapter-{chapter_number:02d}-sketch.md"
+    pillow_path = paths.drafts / "pillow_note.txt"
+
+    outline_path.write_text(build_outline_markdown(bible, session), encoding="utf-8")
+    chapter_path.write_text(build_chapter_sketch(bible, chapter_number), encoding="utf-8")
+    pillow_path.write_text(first_sentence(bible.get("main_thread", ""), max_len=100) + "\n", encoding="utf-8")
+
+    bible["drafts"] = {
+        "chapter_count": chapter_number,
+        "last_draft_at": now_iso(),
+        "last_export_at": bible.get("drafts", {}).get("last_export_at", ""),
+    }
+    write_json(paths.bible, bible)
+
+    return {
+        "chapter_number": chapter_number,
+        "outline_path": str(outline_path),
+        "chapter_sketch_path": str(chapter_path),
+        "pillow_note_path": str(pillow_path),
+    }
+
+
+def export_story(paths: StoryPaths, bible: dict[str, Any], session: dict[str, Any]) -> dict[str, str]:
+    paths.exports.mkdir(parents=True, exist_ok=True)
+    bible = ensure_bible_schema(bible)
+
+    outline = paths.exports / "story-bible.md"
+    transcript = paths.exports / "transcript.md"
+    outline.write_text(build_outline_markdown(bible, session), encoding="utf-8")
+    transcript.write_text(build_transcript_markdown(paths, session), encoding="utf-8")
+
+    bible["drafts"]["last_export_at"] = now_iso()
+    write_json(paths.bible, bible)
+
+    return {"story_bible_path": str(outline), "transcript_path": str(transcript)}
+
+
+def list_story_sessions(story_root: Path) -> list[dict[str, Any]]:
+    if not story_root.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    for entry in sorted(story_root.iterdir()):
+        if not entry.is_dir():
+            continue
+        session_path = entry / "session.json"
+        bible_path = entry / "bible.json"
+        if not session_path.exists():
+            continue
+        session = json.loads(session_path.read_text(encoding="utf-8"))
+        main_thread = ""
+        if bible_path.exists():
+            bible = json.loads(bible_path.read_text(encoding="utf-8"))
+            main_thread = bible.get("main_thread", "")
+        items.append(
+            {
+                "story_id": entry.name,
+                "title": session.get("title", entry.name),
+                "turn_count": session.get("turn_count", 0),
+                "updated_at": session.get("updated_at", ""),
+                "main_thread": main_thread,
+            }
+        )
+    items.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+    return items
 
 
 def build_story_recap(bible: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
@@ -422,6 +922,9 @@ def build_story_recap(bible: dict[str, Any], session: dict[str, Any]) -> dict[st
         "plot_threads": bible.get("plot_threads", []),
         "setting": bible.get("setting", {}),
         "open_questions": bible.get("open_questions", []),
+        "resolved_questions": bible.get("resolved_questions", []),
+        "timeline": bible.get("timeline", []),
+        "drafts": bible.get("drafts", {}),
     }
 
 
@@ -438,9 +941,7 @@ def print_story_recap(recap: dict[str, Any]) -> None:
         for item in recap["characters"][:8]:
             notes = "；".join(item.get("notes", [])[:2])
             print(f"- {item['name']}: {notes or '（待补充）'}")
-    active_threads = [
-        item for item in recap.get("plot_threads", []) if item.get("status") == "active"
-    ]
+    active_threads = [item for item in recap.get("plot_threads", []) if item.get("status") == "active"]
     if active_threads:
         print("活跃线索:")
         for item in active_threads[:8]:
@@ -449,6 +950,8 @@ def print_story_recap(recap: dict[str, Any]) -> None:
         print("待对齐:")
         for question in recap["open_questions"][-5:]:
             print(f"- {question}")
+    if recap.get("drafts", {}).get("last_draft_at"):
+        print(f"最近草稿: {recap['drafts']['last_draft_at']} (chapter {recap['drafts'].get('chapter_count', 0)})")
 
 
 def read_multiline_fragment(prompt: str, input_fn: Callable[[str], str] = input) -> str | None:
@@ -476,26 +979,41 @@ def run_story_tell(
     story_id: str | None = None,
     title: str | None = None,
     seed_fragment: str | None = None,
+    policy: dict[str, Any] | None = None,
+    auto_confirm: bool = False,
+    non_interactive: bool = False,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     paths = resolve_story_paths(story_root, story_id, title)
     paths.root.mkdir(parents=True, exist_ok=True)
     session, bible = load_story_state(paths, title)
+    policy = policy or load_story_blanket_policy()
 
     output_fn("")
     output_fn("=== bedagent story · 口述模式 ===")
     output_fn(f"故事目录: {paths.root}")
+    output_fn(f"story_id: {paths.root.name}")
     output_fn(f"标题: {session['title']} | 回合: {session.get('turn_count', 0)}")
     output_fn("像 vibe coding 一样讲：碎片、跳跃、重复都没关系。")
-    output_fn("多行口述，空行发送。命令: /quit /recap /help")
+    output_fn("多行口述，空行发送。")
+    output_fn("命令: /answer /draft /export /recap /questions /help /quit")
     output_fn("")
 
     last_result: dict[str, Any] | None = None
 
     def handle_fragment(raw: str) -> dict[str, Any] | None:
         nonlocal session, bible, last_result
-        result = process_fragment(paths, raw, session, bible)
+        result = process_fragment(
+            paths,
+            raw,
+            session,
+            bible,
+            policy=policy,
+            auto_confirm=auto_confirm,
+            non_interactive=non_interactive,
+            input_fn=input_fn,
+        )
         session = result["session"]
         bible = result["bible"]
         last_result = result
@@ -504,25 +1022,75 @@ def run_story_tell(
         output_fn("")
         return result
 
+    def handle_answer(raw: str) -> None:
+        nonlocal session, bible, last_result
+        try:
+            result = process_answer(paths, raw, session, bible)
+        except ValueError as exc:
+            output_fn(f"（{exc}）")
+            return
+        session = result["session"]
+        bible = result["bible"]
+        last_result = result
+        output_fn("")
+        output_fn(result["agent_reply"])
+        output_fn("")
+
     if seed_fragment:
         handle_fragment(seed_fragment)
 
     while True:
         fragment = read_multiline_fragment(
-            "继续口述（空行发送；/quit 退出，/recap 回顾）:",
+            "继续口述或 /answer /draft /export /recap /questions /quit:",
             input_fn=input_fn,
         )
         if fragment is None:
-            output_fn("（空输入，继续等待口述）")
+            output_fn("（空输入，继续等待）")
             continue
         if fragment == "/quit":
             break
         if fragment == "/recap":
             print_story_recap(build_story_recap(bible, session))
             continue
+        if fragment == "/questions":
+            open_q = bible.get("open_questions", [])
+            output_fn("")
+            output_fn("=== 待对齐问题 ===")
+            if not open_q:
+                output_fn("（暂无）")
+            else:
+                for idx, question in enumerate(open_q, start=1):
+                    output_fn(f"{idx}. {question}")
+            output_fn("")
+            continue
         if fragment == "/help":
-            output_fn("口述模式：躺着把故事讲出来，Sage 帮你对齐、Focus 帮你剪枝。")
-            output_fn("命令: /recap 回顾 · /quit 退出")
+            output_fn("口述 → Sage 追问 → Focus 剪枝 → Blanket 大改确认 → bible 更新")
+            output_fn("/answer — 回复 Sage 追问  /draft — 生成章节草图  /export — 导出 markdown")
+            continue
+        if fragment == "/draft":
+            result = build_story_drafts(paths, bible, session)
+            bible = ensure_bible_schema(load_json(paths.bible, bible))
+            output_fn("")
+            output_fn("=== bedagent story draft ===")
+            output_fn(f"chapter: {result['chapter_number']}")
+            output_fn(f"outline: {result['outline_path']}")
+            output_fn(f"sketch: {result['chapter_sketch_path']}")
+            output_fn(f"pillow: {result['pillow_note_path']}")
+            output_fn("")
+            continue
+        if fragment == "/export":
+            result = export_story(paths, bible, session)
+            bible = ensure_bible_schema(load_json(paths.bible, bible))
+            output_fn("")
+            output_fn("=== bedagent story export ===")
+            output_fn(f"bible: {result['story_bible_path']}")
+            output_fn(f"transcript: {result['transcript_path']}")
+            output_fn("")
+            continue
+        if fragment == "/answer":
+            answer = read_multiline_fragment("对齐回答（空行发送）:", input_fn=input_fn)
+            if answer and not answer.startswith("/"):
+                handle_answer(answer)
             continue
         handle_fragment(fragment)
 
@@ -537,6 +1105,8 @@ def run_story_tell(
         "root": str(paths.root),
         "bible": str(paths.bible),
         "turns": str(paths.turns),
+        "drafts": str(paths.drafts),
+        "exports": str(paths.exports),
     }
     if last_result:
         recap["last_turn"] = last_result["turn"]["turn"]

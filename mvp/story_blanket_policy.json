@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0.0",
+  "red_keywords": [
+    "删除角色",
+    "删掉角色",
+    "杀死主角",
+    "主角死了",
+    "全部推翻",
+    "重写全书",
+    "改结局",
+    "不是主角",
+    "其实是反派",
+    "kill protagonist",
+    "rewrite everything",
+    "retcon all"
+  ],
+    "yellow_keywords": [
+    "改主线",
+    "换主角",
+    "反转",
+    "其实是",
+    "其实",
+    "从头到尾",
+    "时间线",
+    "twist",
+    "retcon",
+    "flashback"
+  ],
+  "require_confirmation_on_main_thread_pivot": true,
+  "main_thread_pivot_min_turns": 2,
+  "allow_auto_confirm_red": false,
+  "require_confirmation_by_risk": {
+    "green": false,
+    "yellow": true,
+    "red": true
+  }
+}
