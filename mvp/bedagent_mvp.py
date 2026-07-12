@@ -1218,8 +1218,8 @@ def parse_args() -> argparse.Namespace:
     story = sub.add_parser("story", help="oral storytelling loop (口述写故事)")
     story.add_argument(
         "action",
-        choices=["tell", "once", "recap", "answer", "draft", "export", "list"],
-        help="tell=interactive, once=single fragment, recap/draft/export/list, answer=align with Sage",
+        choices=["tell", "once", "recap", "answer", "draft", "export", "list", "voice", "voice-once"],
+        help="tell/voice=interactive, once/voice-once=single turn, recap/draft/export/list/answer",
     )
     story.add_argument("--title", help="story title for a new session")
     story.add_argument(
@@ -1266,6 +1266,52 @@ def parse_args() -> argparse.Namespace:
     story.add_argument(
         "--answer-file",
         help="path to alignment answer text (story answer action)",
+    )
+    story.add_argument(
+        "--audio-file",
+        help="audio file for story voice-once or seed audio for story voice",
+    )
+    story.add_argument(
+        "--seed-audio",
+        help="optional seed audio before interactive story voice loop",
+    )
+    story.add_argument(
+        "--voice-config",
+        default="mvp/voice_config.json",
+        help="DashScope voice config JSON",
+    )
+    story.add_argument(
+        "--mic",
+        action="store_true",
+        help="use microphone push-to-talk in story voice mode",
+    )
+    story.add_argument(
+        "--play-reply",
+        action="store_true",
+        help="auto-play TTS reply audio when sounddevice is available",
+    )
+
+    voice = sub.add_parser("voice", help="DashScope ASR/TTS voice adapter (百炼语音)")
+    voice.add_argument(
+        "action",
+        choices=["transcribe", "speak"],
+        help="transcribe audio to text or synthesize text to speech",
+    )
+    voice.add_argument("--audio-file", help="input audio path (transcribe)")
+    voice.add_argument("--text", help="text to synthesize (speak)")
+    voice.add_argument("--text-file", help="text file to synthesize (speak)")
+    voice.add_argument(
+        "--output",
+        help="output audio path for speak (default: .bedagent/voice/reply.wav)",
+    )
+    voice.add_argument(
+        "--voice-config",
+        default="mvp/voice_config.json",
+        help="DashScope voice config JSON",
+    )
+    voice.add_argument(
+        "--output-json",
+        help="optional path to write voice result JSON",
     )
 
     return parser.parse_args()
@@ -1444,6 +1490,78 @@ def main() -> int:
             print(f"- error: {err}")
         return 0 if ok else 1
 
+    if args.command == "voice":
+        import sys
+
+        mvp_dir = Path(__file__).resolve().parent
+        if str(mvp_dir) not in sys.path:
+            sys.path.insert(0, str(mvp_dir))
+        from voice_adapter import (
+            build_tts_summary,
+            load_voice_config,
+            synthesize_speech,
+            transcribe_file,
+        )
+
+        voice_config = load_voice_config(Path(args.voice_config))
+
+        if args.action == "transcribe":
+            if not args.audio_file:
+                print("Input error: --audio-file is required for voice transcribe.")
+                return 2
+            try:
+                result = transcribe_file(Path(args.audio_file), config=voice_config)
+            except Exception as exc:
+                print(f"Voice error: {exc}")
+                return 1
+            print("")
+            print("=== bedagent voice transcribe ===")
+            print(f"model: {result.model}")
+            print(f"audio: {result.audio_path}")
+            print(f"text: {result.text}")
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps(result.__dict__, indent=2, ensure_ascii=False, default=str) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"transcribe_json: {output_path}")
+            return 0
+
+        if args.action == "speak":
+            if bool(args.text) == bool(args.text_file):
+                print("Input error: provide exactly one of --text or --text-file for voice speak.")
+                return 2
+            text = args.text
+            if args.text_file:
+                text = Path(args.text_file).read_text(encoding="utf-8").strip()
+            output = Path(args.output or ".bedagent/voice/reply.wav")
+            try:
+                summary = build_tts_summary(text or "", voice_config)
+                result = synthesize_speech(summary, output, config=voice_config)
+            except Exception as exc:
+                print(f"Voice error: {exc}")
+                return 1
+            print("")
+            print("=== bedagent voice speak ===")
+            print(f"model: {result.model}")
+            print(f"voice: {result.voice}")
+            print(f"text: {result.text}")
+            print(f"output: {result.output_path}")
+            print(f"bytes: {result.byte_size}")
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps(result.__dict__, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"speak_json: {output_path}")
+            return 0
+
+        raise ValueError(f"Unsupported voice action: {args.action}")
+
     if args.command == "story":
         import sys
 
@@ -1463,10 +1581,20 @@ def main() -> int:
             process_fragment,
             resolve_story_paths,
             run_story_tell,
+            run_story_voice_tell,
+        )
+        from voice_adapter import (
+            build_tts_summary,
+            load_voice_config,
+            persist_voice_turn_artifacts,
+            synthesize_speech,
+            transcribe_file,
+            voice_turn_paths,
         )
 
         story_root = Path(args.story_root)
         story_policy = load_story_blanket_policy(Path(args.blanket_policy))
+        voice_config = load_voice_config(Path(args.voice_config))
 
         if args.action == "list":
             items = list_story_sessions(story_root)
@@ -1504,6 +1632,39 @@ def main() -> int:
                 auto_confirm=args.auto_confirm,
                 non_interactive=args.non_interactive,
             )
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps(recap, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"session_json: {output_path}")
+            return 0
+
+        if args.action == "voice":
+            seed_audio = None
+            if args.seed_audio:
+                seed_audio = Path(args.seed_audio)
+            elif args.audio_file:
+                seed_audio = Path(args.audio_file)
+            try:
+                recap = run_story_voice_tell(
+                    story_root=story_root,
+                    story_id=args.story_id,
+                    title=args.title,
+                    seed_audio=seed_audio,
+                    policy=story_policy,
+                    voice_config=voice_config,
+                    voice_config_path=Path(args.voice_config),
+                    auto_confirm=args.auto_confirm,
+                    non_interactive=args.non_interactive,
+                    use_mic=args.mic,
+                    play_reply=args.play_reply,
+                )
+            except Exception as exc:
+                print(f"Voice error: {exc}")
+                return 1
             if args.output_json:
                 output_path = Path(args.output_json)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1637,6 +1798,56 @@ def main() -> int:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
                 print(f"export_json: {output_path}")
+            return 0
+
+        if args.action == "voice-once":
+            if not args.audio_file:
+                print("Input error: --audio-file is required for story voice-once.")
+                return 2
+            paths.root.mkdir(parents=True, exist_ok=True)
+            session, bible = load_story_state(paths, args.title)
+            try:
+                transcript = transcribe_file(Path(args.audio_file), config=voice_config)
+                result = process_fragment(
+                    paths,
+                    transcript.text,
+                    session,
+                    bible,
+                    policy=story_policy,
+                    auto_confirm=args.auto_confirm,
+                    non_interactive=args.non_interactive,
+                )
+                turn_no = result["turn"]["turn"]
+                artifacts = voice_turn_paths(paths.voice, turn_no)
+                persist_voice_turn_artifacts(
+                    artifacts,
+                    transcript=transcript.text,
+                    agent_reply=result["agent_reply"],
+                    input_audio=Path(args.audio_file),
+                )
+                tts_text = build_tts_summary(result["agent_reply"], voice_config)
+                speak = synthesize_speech(tts_text, artifacts["reply_audio"], config=voice_config)
+            except Exception as exc:
+                print(f"Voice error: {exc}")
+                return 1
+            print("")
+            print("=== bedagent story voice-once ===")
+            print(f"story_id: {paths.root.name}")
+            print(f"transcript: {transcript.text}")
+            print(f"applied: {result['applied']}")
+            print(result["agent_reply"])
+            print(f"reply_audio: {speak.output_path}")
+            if args.output_json:
+                payload = {
+                    "story_id": paths.root.name,
+                    "transcript": transcript.text,
+                    "turn": result,
+                    "reply_audio": speak.output_path,
+                }
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                print(f"voice_once_json: {output_path}")
             return 0
 
         raise ValueError(f"Unsupported story action: {args.action}")

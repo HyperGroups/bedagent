@@ -172,6 +172,27 @@ Story sessions are written to:
 
 Blanket policy for major story pivots: `mvp/story_blanket_policy.json`
 
+Voice (DashScope 百炼 ASR/TTS):
+
+```bash
+pip install -r mvp/requirements-voice.txt
+export DASHSCOPE_API_KEY="sk-..."
+
+# Transcribe / speak
+python3 mvp/bedagent_mvp.py voice transcribe --audio-file input.wav
+python3 mvp/bedagent_mvp.py voice speak --text "收到，继续讲。" --output reply.wav
+
+# Story voice loop
+python3 mvp/bedagent_mvp.py story voice-once \
+  --title "会做梦的维修AI" \
+  --audio-file input.wav \
+  --auto-confirm
+
+python3 mvp/bedagent_mvp.py story voice --title "会做梦的维修AI" --mic --play-reply
+```
+
+Voice config: `mvp/voice_config.json` (ASR/TTS models, voice, mic duration)
+
 ## Key runtime flags
 
 - `--blanket-policy`: blanket policy JSON file path.
@@ -185,7 +206,8 @@ Blanket policy for major story pivots: `mvp/story_blanket_policy.json`
 - `memory-search` supports `--risk-level`, `--act-status`, `--since` pre-filters.
 - `memory-search` supports `--min-score` and `--explain` for result control.
 - `validate-explain` subcommand: validates `policy_explain` schema and required fields.
-- `story` subcommand: oral storytelling loop (`tell`, `once`, `recap`, `answer`, `draft`, `export`, `list`) with bible, blanket, and draft sandbox.
+- `story` subcommand: oral storytelling loop (`tell`, `voice`, `voice-once`, `once`, `recap`, `answer`, `draft`, `export`, `list`) with bible, blanket, draft sandbox, and DashScope voice adapter.
+- `voice` subcommand: DashScope ASR/TTS (`transcribe`, `speak`).
 
 ## Output artifacts
 

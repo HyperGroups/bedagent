@@ -522,6 +522,10 @@ class StoryPaths:
     def exports(self) -> Path:
         return self.root / "exports"
 
+    @property
+    def voice(self) -> Path:
+        return self.root / "voice"
+
 
 def resolve_story_paths(story_root: Path, story_id: str | None, title: str | None) -> StoryPaths:
     if story_id:
@@ -1108,6 +1112,239 @@ def run_story_tell(
         "drafts": str(paths.drafts),
         "exports": str(paths.exports),
     }
+    if last_result:
+        recap["last_turn"] = last_result["turn"]["turn"]
+    return recap
+
+
+def run_story_voice_tell(
+    story_root: Path,
+    story_id: str | None = None,
+    title: str | None = None,
+    seed_audio: Path | None = None,
+    policy: dict[str, Any] | None = None,
+    voice_config: dict[str, Any] | None = None,
+    voice_config_path: Path | None = None,
+    auto_confirm: bool = False,
+    non_interactive: bool = False,
+    use_mic: bool = False,
+    play_reply: bool = False,
+    input_fn: Callable[[str], str] = input,
+    output_fn: Callable[[str], None] = print,
+) -> dict[str, Any]:
+    from voice_adapter import (
+        build_tts_summary,
+        load_voice_config,
+        map_voice_command,
+        persist_voice_turn_artifacts,
+        play_audio_file,
+        record_microphone_wav,
+        synthesize_speech,
+        transcribe_file,
+        voice_turn_paths,
+    )
+
+    paths = resolve_story_paths(story_root, story_id, title)
+    paths.root.mkdir(parents=True, exist_ok=True)
+    session, bible = load_story_state(paths, title)
+    policy = policy or load_story_blanket_policy()
+    voice_config = voice_config or load_voice_config(voice_config_path)
+
+    output_fn("")
+    output_fn("=== bedagent story · 语音口述模式 ===")
+    output_fn(f"故事目录: {paths.root}")
+    output_fn(f"story_id: {paths.root.name}")
+    output_fn(f"标题: {session['title']} | 回合: {session.get('turn_count', 0)}")
+    output_fn(f"ASR: {voice_config['asr_model']} | TTS: {voice_config['tts_model']} / {voice_config['tts_voice']}")
+    output_fn("提供音频文件路径，输入 mic 录音，或口述文本路径 fallback。")
+    output_fn("语音口令：暂停 / 继续 / 取消 / 汇报一下")
+    output_fn("命令: /text /answer /draft /export /recap /questions /help /quit")
+    output_fn("")
+
+    last_result: dict[str, Any] | None = None
+
+    def resolve_audio_input(raw: str) -> Path | None:
+        value = clean_text(raw)
+        if not value:
+            if use_mic:
+                turn_no = int(session.get("turn_count", 0)) + 1
+                target = voice_turn_paths(paths.voice, turn_no)["input"]
+                output_fn(f"录音 {voice_config.get('mic_seconds', 8)} 秒...")
+                return record_microphone_wav(
+                    target,
+                    seconds=float(voice_config.get("mic_seconds", 8)),
+                    sample_rate=int(voice_config.get("sample_rate", 16000)),
+                )
+            return None
+        if value.lower() == "mic":
+            turn_no = int(session.get("turn_count", 0)) + 1
+            target = voice_turn_paths(paths.voice, turn_no)["input"]
+            output_fn(f"录音 {voice_config.get('mic_seconds', 8)} 秒...")
+            return record_microphone_wav(
+                target,
+                seconds=float(voice_config.get("mic_seconds", 8)),
+                sample_rate=int(voice_config.get("sample_rate", 16000)),
+            )
+        path = Path(value).expanduser()
+        if path.exists():
+            return path
+        output_fn(f"（找不到音频文件: {path}）")
+        return None
+
+    def handle_voice_turn(audio_path: Path) -> dict[str, Any] | None:
+        nonlocal session, bible, last_result
+        transcript = transcribe_file(audio_path, config=voice_config, config_path=voice_config_path)
+        mapped = map_voice_command(transcript.text, voice_config)
+        if mapped:
+            return {"command": mapped, "transcript": transcript.text}
+
+        output_fn("")
+        output_fn(f"转写：{transcript.text}")
+        result = process_fragment(
+            paths,
+            transcript.text,
+            session,
+            bible,
+            policy=policy,
+            auto_confirm=auto_confirm,
+            non_interactive=non_interactive,
+            input_fn=input_fn,
+        )
+        session = result["session"]
+        bible = result["bible"]
+        last_result = result
+
+        turn_no = result["turn"]["turn"]
+        artifacts = voice_turn_paths(paths.voice, turn_no)
+        persist_voice_turn_artifacts(
+            artifacts,
+            transcript=transcript.text,
+            agent_reply=result["agent_reply"],
+            input_audio=audio_path,
+        )
+        tts_text = build_tts_summary(result["agent_reply"], voice_config)
+        speak = synthesize_speech(tts_text, artifacts["reply_audio"], config=voice_config)
+        output_fn("")
+        output_fn(result["agent_reply"])
+        output_fn("")
+        output_fn(f"TTS: {speak.output_path} ({speak.byte_size} bytes)")
+        if play_reply:
+            played = play_audio_file(Path(speak.output_path))
+            if not played:
+                output_fn("（未安装播放依赖，跳过自动播放）")
+        output_fn("")
+        return result
+
+    def handle_fragment(raw: str) -> dict[str, Any] | None:
+        nonlocal session, bible, last_result
+        result = process_fragment(
+            paths,
+            raw,
+            session,
+            bible,
+            policy=policy,
+            auto_confirm=auto_confirm,
+            non_interactive=non_interactive,
+            input_fn=input_fn,
+        )
+        session = result["session"]
+        bible = result["bible"]
+        last_result = result
+        output_fn("")
+        output_fn(result["agent_reply"])
+        output_fn("")
+        return result
+
+    if seed_audio:
+        handle_voice_turn(seed_audio.expanduser().resolve())
+
+    while True:
+        raw = input_fn("音频路径 / mic / /text / /quit: ").strip()
+        if not raw:
+            if use_mic:
+                audio = resolve_audio_input("mic")
+                if audio is None:
+                    continue
+                outcome = handle_voice_turn(audio)
+            else:
+                output_fn("（空输入，继续等待）")
+                continue
+        elif raw.startswith("/"):
+            outcome = {"command": raw}
+        else:
+            mapped = map_voice_command(raw, voice_config)
+            if mapped:
+                outcome = {"command": mapped}
+            elif raw.lower() == "mic" or Path(raw).expanduser().exists():
+                audio = resolve_audio_input(raw)
+                if audio is None:
+                    continue
+                outcome = handle_voice_turn(audio)
+            else:
+                output_fn("（请输入有效音频路径、mic 或 /command）")
+                continue
+
+        if isinstance(outcome, dict) and outcome.get("command"):
+            command = outcome["command"]
+            if command == "/quit":
+                break
+            if command == "/recap":
+                print_story_recap(build_story_recap(bible, session))
+                continue
+            if command == "/questions":
+                open_q = bible.get("open_questions", [])
+                output_fn("")
+                output_fn("=== 待对齐问题 ===")
+                if not open_q:
+                    output_fn("（暂无）")
+                else:
+                    for idx, question in enumerate(open_q, start=1):
+                        output_fn(f"{idx}. {question}")
+                output_fn("")
+                continue
+            if command == "/help":
+                output_fn("语音口述：DashScope ASR 转写 → Sage/Focus → CosyVoice TTS 短反馈")
+                output_fn("/text 切到文本口述  /answer /draft /export /recap /quit")
+                continue
+            if command == "/draft":
+                result = build_story_drafts(paths, bible, session)
+                bible = ensure_bible_schema(load_json(paths.bible, bible))
+                output_fn(f"draft: {result['chapter_sketch_path']}")
+                continue
+            if command == "/export":
+                result = export_story(paths, bible, session)
+                bible = ensure_bible_schema(load_json(paths.bible, bible))
+                output_fn(f"export: {result['story_bible_path']}")
+                continue
+            if command == "/text":
+                fragment = read_multiline_fragment("文本口述（空行发送）:", input_fn=input_fn)
+                if fragment and not fragment.startswith("/"):
+                    handle_fragment(fragment)
+                continue
+            if command == "/answer":
+                answer = read_multiline_fragment("对齐回答（空行发送）:", input_fn=input_fn)
+                if answer and not answer.startswith("/"):
+                    try:
+                        ans = process_answer(paths, answer, session, bible)
+                        session = ans["session"]
+                        bible = ans["bible"]
+                        output_fn(ans["agent_reply"])
+                    except ValueError as exc:
+                        output_fn(f"（{exc}）")
+                continue
+            if command in {"/pause", "/continue"}:
+                output_fn("（已收到语音控制口令）")
+                continue
+            output_fn(f"（未知命令: {command}）")
+            continue
+
+    output_fn("")
+    output_fn("=== bedagent story voice session ended ===")
+    output_fn(f"story_id: {paths.root.name}")
+    output_fn(f"voice_dir: {paths.voice}")
+    recap = build_story_recap(bible, session)
+    recap["story_id"] = paths.root.name
+    recap["voice_dir"] = str(paths.voice)
     if last_result:
         recap["last_turn"] = last_result["turn"]["turn"]
     return recap

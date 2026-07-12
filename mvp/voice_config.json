@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0.0",
+  "provider": "dashscope",
+  "region": "cn-beijing",
+  "workspace_id": "",
+  "asr_model": "fun-asr-realtime",
+  "tts_model": "cosyvoice-v3-flash",
+  "tts_voice": "longxiaochun",
+  "sample_rate": 16000,
+  "mic_seconds": 8,
+  "max_tts_chars": 220,
+  "secret_block_keywords": [
+    "api_key",
+    "api key",
+    "password",
+    "token",
+    "secret",
+    "credential",
+    "sk-"
+  ],
+  "voice_commands": {
+    "pause": ["暂停", "停一下", "等等"],
+    "continue": ["继续", "接着说"],
+    "cancel": ["取消", "算了"],
+    "recap": ["汇报一下", "回顾一下", "recap"],
+    "quit": ["退出", "结束", "quit"]
+  }
+}
