@@ -193,6 +193,15 @@ python3 mvp/bedagent_mvp.py story voice --title "会做梦的维修AI" --mic --p
 
 Voice config: `mvp/voice_config.json` (ASR/TTS models, voice, mic duration)
 
+Web Agent UI (GitHub Pages + optional local API):
+
+```bash
+# Static site includes Agent entry at site/agent/
+# Local dev with API (MVP run + DashScope voice):
+python3 mvp/bedagent_web.py --port 8765
+# open http://127.0.0.1:8765/agent/
+```
+
 ## Key runtime flags
 
 - `--blanket-policy`: blanket policy JSON file path.

@@ -78,6 +78,15 @@ a {
   text-decoration: none;
 }
 
+.nav-links a.nav-agent {
+  background: rgba(125, 211, 252, 0.12);
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 999px;
+  color: var(--blue);
+  font-weight: 800;
+  padding: 0.35rem 0.75rem;
+}
+
 .hero-grid {
   align-items: center;
   display: grid;

@@ -6,7 +6,27 @@ main_question: 是否先从低屏幕语音入口做 MVP？
 
 ## 想法
 
-bedagent 的 Voice 层现已接入 **阿里云 DashScope 百炼**：
+bedagent 的 Voice 层现已接入 **阿里云 DashScope 百炼**，并提供 **Web Agent 入口**：
+
+- 静态页面：`site/agent/`（GitHub Pages 可直达）
+- 本地 API：`python3 mvp/bedagent_web.py`（MVP run + 语音转写）
+
+## Web Agent 入口
+
+| 模式 | 说明 |
+|------|------|
+| 躺床写故事 | 浏览器内 Story 引擎 + localStorage |
+| MVP 闭环 | 需本地 API |
+| 语音口述 | 浏览器录音 + DashScope ASR（需本地 API + API Key） |
+
+访问：
+
+```text
+https://hypergroups.github.io/bedagent/agent/
+# 本地
+python3 mvp/bedagent_web.py --port 8765
+# http://127.0.0.1:8765/agent/
+```
 
 - **ASR**：`fun-asr-realtime`（本地音频文件转写）
 - **TTS**：`cosyvoice-v3-flash`（短反馈播报，默认音色 `longxiaochun`）
