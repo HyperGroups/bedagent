@@ -63,7 +63,7 @@ CATEGORY_HINTS: dict[str, tuple[str, ...]] = {
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 def normalize_fragment(value: str) -> str:
@@ -531,7 +531,7 @@ def build_agent_reply(
         lines.append(f"人物卡：{names}")
     if bible.get("open_questions"):
         lines.append(f"待回答：{len(bible['open_questions'])} 条（可用 /answer 回复）")
-    lines.append("命令：/answer /draft /export /recap /questions /quit")
+    lines.append("命令：/answer /draft /expand /characters /export /recap /questions /quit")
     return "\n".join(lines)
 
 
@@ -1169,9 +1169,15 @@ def list_story_sessions(story_root: Path) -> list[dict[str, Any]]:
                 "turn_count": session.get("turn_count", 0),
                 "updated_at": session.get("updated_at", ""),
                 "main_thread": main_thread,
+                "_mtime": entry.stat().st_mtime,
             }
         )
-    items.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+    items.sort(
+        key=lambda item: (str(item.get("updated_at") or ""), float(item.get("_mtime") or 0.0), str(item.get("story_id") or "")),
+        reverse=True,
+    )
+    for item in items:
+        item.pop("_mtime", None)
     return items
 
 

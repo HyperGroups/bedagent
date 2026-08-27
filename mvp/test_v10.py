@@ -45,6 +45,10 @@ class StoryResumeAndMemoryTests(unittest.TestCase):
                 empty_bible("first"),
                 auto_confirm=True,
             )
+            session_path = first.root / "session.json"
+            payload = json.loads(session_path.read_text(encoding="utf-8"))
+            payload["updated_at"] = "2020-01-01T00:00:00+00:00"
+            session_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             second = resolve_story_paths(root, None, "second")
             second.root.mkdir(parents=True)
             process_fragment(
