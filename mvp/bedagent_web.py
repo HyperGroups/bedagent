@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import cgi
 import json
 import mimetypes
@@ -21,7 +22,7 @@ REPO_ROOT = MVP_DIR.parent
 SITE_DIR = REPO_ROOT / "site"
 STORY_ROOT = REPO_ROOT / ".bedagent" / "stories"
 MEMORY_JOURNAL = REPO_ROOT / ".bedagent" / "memory" / "journal.ndjson"
-PRODUCT_MILESTONE = "v0.10.0-mvp"
+PRODUCT_MILESTONE = "v0.11.0-mvp"
 
 
 def ensure_mvp_path() -> None:
@@ -100,6 +101,9 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                         "unified-search",
                         "quiet-tts",
                         "character-sheet",
+                        "voice-stream",
+                        "voice-story-loop",
+                        "voice-status",
                     ],
                 },
             )
@@ -119,6 +123,9 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/search":
             self.handle_unified_search(parsed.query)
+            return
+        if path == "/api/voice/status":
+            self.handle_voice_status()
             return
         if path.startswith("/api/story/") and path.endswith("/characters") and path.count("/") == 4:
             story_id = path.split("/")[3]
@@ -163,6 +170,9 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/voice/speak":
             self.handle_voice_speak()
+            return
+        if parsed.path == "/api/voice/story":
+            self.handle_voice_story()
             return
 
         json_response(self, 404, {"error": f"Unknown path: {parsed.path}"})
@@ -475,8 +485,14 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             json_response(self, 500, {"error": str(exc)})
 
+    def handle_voice_status(self) -> None:
+        ensure_mvp_path()
+        from voice_adapter import voice_status
+
+        json_response(self, 200, {"ok": True, **voice_status()})
+
     def handle_voice_transcribe(self) -> None:
-        from voice_adapter import transcribe_file
+        from voice_adapter import transcribe_file, transcribe_stream
 
         try:
             form = cgi.FieldStorage(
@@ -488,8 +504,19 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                 },
             )
             simulate_text = form.getvalue("simulate_transcript")
+            want_stream = str(form.getvalue("stream") or "").lower() in {"1", "true", "yes"}
             if simulate_text:
-                json_response(self, 200, {"text": str(simulate_text).strip(), "model": "simulated-asr"})
+                text = str(simulate_text).strip()
+                payload: dict[str, Any] = {"text": text, "model": "simulated-asr"}
+                if want_stream:
+                    from voice_adapter import split_transcript_partials
+
+                    parts = split_transcript_partials(text)
+                    payload["partials"] = [
+                        {"index": idx, "text": item, "is_final": item == parts[-1]}
+                        for idx, item in enumerate(parts, start=1)
+                    ]
+                json_response(self, 200, payload)
                 return
             if "audio" not in form:
                 json_response(self, 400, {"error": "audio file field is required"})
@@ -506,8 +533,102 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                         encoding="utf-8",
                     )
                 wav = convert_to_wav_if_needed(src)
+                if want_stream:
+                    stream = transcribe_stream(wav)
+                    json_response(
+                        self,
+                        200,
+                        {
+                            "text": stream.text,
+                            "model": stream.model,
+                            "partials": stream.partials,
+                            "skipped": stream.skipped,
+                            "skip_reason": stream.skip_reason,
+                            "command": stream.command,
+                        },
+                    )
+                    return
                 result = transcribe_file(wav)
                 json_response(self, 200, {"text": result.text, "model": result.model})
+        except Exception as exc:
+            json_response(self, 500, {"error": str(exc)})
+
+    def handle_voice_story(self) -> None:
+        from story_session import load_story_state, resolve_resume_story_id, resolve_story_paths, run_voice_story_once
+
+        try:
+            form = cgi.FieldStorage(
+                fp=self.rfile,
+                headers=self.headers,
+                environ={
+                    "REQUEST_METHOD": "POST",
+                    "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                },
+            )
+            simulate_text = form.getvalue("simulate_transcript")
+            title = str(form.getvalue("title") or "未命名故事")
+            story_id = form.getvalue("story_id") or None
+            quiet = str(form.getvalue("quiet") or "").lower() in {"1", "true", "yes"}
+            auto_confirm = str(form.getvalue("auto_confirm") or "1").lower() not in {"0", "false", "no"}
+            include_audio = str(form.getvalue("include_audio") or "1").lower() not in {"0", "false", "no"}
+            resume = str(form.getvalue("resume") or "").lower() in {"1", "true", "yes"}
+            if resume and not story_id:
+                story_id = resolve_resume_story_id(STORY_ROOT, None, True)
+            paths = resolve_story_paths(STORY_ROOT, story_id, title)
+            paths.root.mkdir(parents=True, exist_ok=True)
+            session, bible = load_story_state(paths, title)
+
+            with tempfile.TemporaryDirectory() as tmp:
+                if simulate_text:
+                    wav = Path(tmp) / "sim.wav"
+                    from voice_adapter import write_silent_wav
+
+                    write_silent_wav(wav)
+                    wav.with_name("sim.transcript.txt").write_text(str(simulate_text).strip() + "\n", encoding="utf-8")
+                else:
+                    if "audio" not in form:
+                        json_response(self, 400, {"error": "audio file field or simulate_transcript is required"})
+                        return
+                    item = form["audio"]
+                    suffix = Path(item.filename or "audio.webm").suffix or ".webm"
+                    src = Path(tmp) / f"upload{suffix}"
+                    src.write_bytes(item.file.read())
+                    sidecar_text = form.getvalue("transcript_sidecar")
+                    if sidecar_text:
+                        src.with_name(f"{src.stem}.transcript.txt").write_text(
+                            str(sidecar_text).strip() + "\n",
+                            encoding="utf-8",
+                        )
+                    wav = convert_to_wav_if_needed(src)
+                payload = run_voice_story_once(
+                    paths,
+                    wav,
+                    session,
+                    bible,
+                    auto_confirm=auto_confirm,
+                    non_interactive=True,
+                    quiet=quiet,
+                    memory_journal_path=MEMORY_JOURNAL,
+                )
+            response = {
+                "story_id": payload["story_id"],
+                "transcript": payload.get("transcript", ""),
+                "partials": payload.get("partials") or [],
+                "applied": payload.get("applied", False),
+                "skipped": payload.get("skipped", False),
+                "skip_reason": payload.get("skip_reason", ""),
+                "command": payload.get("command"),
+                "agent_reply": payload.get("agent_reply", ""),
+                "tts_text": payload.get("reply_text", ""),
+                "session": payload.get("session"),
+                "bible": payload.get("bible"),
+                "quiet": payload.get("quiet", quiet),
+            }
+            reply_audio = payload.get("reply_audio")
+            if include_audio and reply_audio and Path(reply_audio).exists():
+                response["reply_audio_base64"] = base64.b64encode(Path(reply_audio).read_bytes()).decode("ascii")
+                response["reply_audio_mime"] = "audio/wav"
+            json_response(self, 200, response)
         except Exception as exc:
             json_response(self, 500, {"error": str(exc)})
 

@@ -1492,17 +1492,48 @@ def run_voice_story_once(
         load_voice_config,
         persist_voice_turn_artifacts,
         synthesize_speech,
-        transcribe_file,
+        transcribe_stream,
         voice_turn_paths,
     )
 
     policy = policy or load_story_blanket_policy()
     voice_config = apply_quiet_config(voice_config or load_voice_config(voice_config_path), quiet=quiet)
 
-    transcript = transcribe_file(audio_path, config=voice_config, config_path=voice_config_path)
+    stream = transcribe_stream(audio_path, config=voice_config, config_path=voice_config_path, stream=True)
+    if stream.skipped and stream.skip_reason == "silence":
+        return {
+            "story_id": paths.root.name,
+            "transcript": "",
+            "asr_model": stream.model,
+            "applied": False,
+            "skipped": True,
+            "skip_reason": "silence",
+            "partials": stream.partials,
+            "agent_reply": "（静音，本轮未写入 bible）",
+            "session": session,
+            "bible": bible,
+            "quiet": bool(voice_config.get("quiet_mode")),
+            "silence_ratio": stream.silence_ratio,
+        }
+    if stream.command:
+        return {
+            "story_id": paths.root.name,
+            "transcript": stream.text,
+            "asr_model": stream.model,
+            "applied": False,
+            "skipped": True,
+            "skip_reason": stream.skip_reason,
+            "command": stream.command,
+            "partials": stream.partials,
+            "agent_reply": f"（语音口令 {stream.command}，未写入 bible）",
+            "session": session,
+            "bible": bible,
+            "quiet": bool(voice_config.get("quiet_mode")),
+        }
+
     result = process_fragment(
         paths,
-        transcript.text,
+        stream.text,
         session,
         bible,
         policy=policy,
@@ -1516,19 +1547,22 @@ def run_voice_story_once(
     artifacts = voice_turn_paths(paths.voice, turn_no)
     persist_voice_turn_artifacts(
         artifacts,
-        transcript=transcript.text,
+        transcript=stream.text,
         agent_reply=result["agent_reply"],
         input_audio=audio_path,
+        partials=stream.partials,
     )
     tts_text = build_tts_summary(result["agent_reply"], voice_config)
     speak = synthesize_speech(tts_text, artifacts["reply_audio"], config=voice_config)
 
     return {
         "story_id": paths.root.name,
-        "transcript": transcript.text,
-        "asr_model": transcript.model,
+        "transcript": stream.text,
+        "asr_model": stream.model,
         "result": result,
         "applied": result["applied"],
+        "skipped": False,
+        "partials": stream.partials,
         "agent_reply": result["agent_reply"],
         "tts_model": speak.model,
         "reply_audio": speak.output_path,
@@ -1537,6 +1571,7 @@ def run_voice_story_once(
         "session": result["session"],
         "bible": result["bible"],
         "quiet": bool(voice_config.get("quiet_mode")),
+        "silence_ratio": stream.silence_ratio,
     }
 
 
@@ -1567,7 +1602,7 @@ def run_story_voice_tell(
         play_audio_file,
         record_microphone_wav,
         synthesize_speech,
-        transcribe_file,
+        transcribe_stream,
         voice_turn_paths,
     )
 
@@ -1620,8 +1655,15 @@ def run_story_voice_tell(
 
     def handle_voice_turn(audio_path: Path) -> dict[str, Any] | None:
         nonlocal session, bible, last_result
-        transcript = transcribe_file(audio_path, config=voice_config, config_path=voice_config_path)
-        mapped = map_voice_command(transcript.text, voice_config)
+        transcript = transcribe_stream(audio_path, config=voice_config, config_path=voice_config_path)
+        if transcript.partials:
+            for item in transcript.partials:
+                marker = "终" if item.get("is_final") else "部"
+                output_fn(f"  [{marker}] {item['text']}")
+        if transcript.skipped and transcript.skip_reason == "silence":
+            output_fn("（静音，跳过本轮）")
+            return {"skipped": True, "skip_reason": "silence"}
+        mapped = transcript.command or map_voice_command(transcript.text, voice_config)
         if mapped:
             return {"command": mapped, "transcript": transcript.text}
 
@@ -1650,6 +1692,7 @@ def run_story_voice_tell(
             transcript=transcript.text,
             agent_reply=result["agent_reply"],
             input_audio=audio_path,
+            partials=transcript.partials,
         )
         tts_text = build_tts_summary(result["agent_reply"], voice_config)
         speak = synthesize_speech(tts_text, artifacts["reply_audio"], config=voice_config)
@@ -1721,8 +1764,16 @@ def run_story_voice_tell(
             command = outcome["command"]
             if command == "/quit":
                 break
-            if command == "/recap":
+            if command in {"/recap", "/resume"}:
                 print_story_recap(build_story_recap(bible, session))
+                if play_reply and not voice_config.get("quiet_mode"):
+                    note = build_night_pillow_note(bible, session)
+                    recap_audio = paths.voice / "recap.wav"
+                    speak = synthesize_speech(note, recap_audio, config=voice_config)
+                    output_fn(f"TTS recap: {speak.output_path}")
+                    played = play_audio_file(Path(speak.output_path))
+                    if not played:
+                        output_fn("（未安装播放依赖，跳过自动播放）")
                 continue
             if command == "/questions":
                 open_q = bible.get("open_questions", [])

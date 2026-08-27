@@ -370,6 +370,17 @@
   accent-color: var(--blue);
 }
 
+.voice-partials {
+  color: var(--muted);
+  font-size: 0.88rem;
+  min-height: 1.2em;
+  padding: 0.4rem 0 0;
+}
+
+.record-status.recording {
+  color: var(--blue);
+}
+
 @media (max-width: 960px) {
   .mode-grid,
   .console-layout {

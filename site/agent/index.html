@@ -113,14 +113,19 @@
             </div>
 
             <div id="voice-controls" class="input-area hidden">
-              <p class="hint">录音后通过本地 API 调用 DashScope ASR，再进入 Story 流程。</p>
+              <p class="hint">按住说话，松手即转写并进入 Story。本地 API + 模拟 sidecar 也可闭环。</p>
               <div class="voice-row">
-                <button class="button primary" type="button" id="btn-record">🎙 录音</button>
+                <button class="button primary" type="button" id="btn-record">🎙 按住说话</button>
                 <span id="record-status" class="record-status">就绪</span>
               </div>
+              <label class="quiet-toggle">
+                <input type="checkbox" id="chk-voice-loop" checked />
+                说完即闭环（ASR → Sage → TTS）
+              </label>
               <audio id="playback" controls class="hidden"></audio>
+              <div id="voice-partials" class="voice-partials" aria-live="polite"></div>
               <div class="input-actions">
-                <button class="button secondary" type="button" id="btn-voice-transcribe">转写并发送</button>
+                <button class="button secondary" type="button" id="btn-voice-transcribe">仅转写并发送</button>
               </div>
             </div>
           </div>

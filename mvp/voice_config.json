@@ -8,6 +8,9 @@
   "tts_voice": "longxiaochun",
   "sample_rate": 16000,
   "mic_seconds": 8,
+  "stream_partial_chars": 8,
+  "silence_skip_ratio": 0.97,
+  "stream_frame_bytes": 3200,
   "max_tts_chars": 220,
   "quiet_mode": false,
   "quiet_max_tts_chars": 72,
@@ -30,6 +33,8 @@
     "export": ["导出", "export"],
     "expand": ["扩写", "展开这一章", "expand"],
     "quiet": ["小声点", "夜间模式", "别出声"],
-    "characters": ["人物卡", "有谁"]
+    "characters": ["人物卡", "有谁"],
+    "answer": ["对齐", "回答问题", "我来回答"],
+    "resume": ["恢复最近", "接着上次", "resume"]
   }
 }

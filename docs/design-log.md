@@ -580,3 +580,34 @@ product_milestone: v0.10.0-mvp
 - 统一检索仍是本地 TF-IDF，不引入向量库；
 - 连续流式 ASR 仍未做，麦克风仍是 push-to-talk 窗口。
 
+## ADR-0019：v0.11 流式语音闭环、静音门与按住说话
+
+```yaml
+date: 2026-08-27
+design_version: D0.1
+status: accepted
+product_milestone: v0.11.0-mvp
+```
+
+### 决策
+
+把 Voice 从「转写一次再手动发送」推进成床边闭环：
+
+1. `transcribe_stream()` 输出 growing partials（模拟 sidecar 切分，或 DashScope Recognition `start/send_audio_frame/stop`）；
+2. 静音门：无 sidecar 且 PCM 近似静音时不写 bible；
+3. 语音口令（含对齐/恢复）短路，不误写入故事；
+4. `POST /api/voice/story` 一次完成 ASR → Sage → TTS；
+5. Web 按住说话、松手闭环、新录音打断正在播放的 TTS；
+6. `voice status` / `voice recap` 让床边先听短汇报。
+
+### 原因
+
+「全面推进包括语音功能」要求少抬手：说完就对齐，听完就知道主线，空录音不要污染 bible。
+
+### 边界
+
+- 浏览器仍是 push-to-talk，不是持续开麦 VAD 分轮；
+- 无 API Key 时用 sidecar / `BEDAGENT_TTS_SIMULATE` 跑通测试；
+- DashScope 实时流失败回退到文件 ASR + 合成 partials；
+- GitHub Pages 仍需本地 `bedagent_web.py` 才能真转写。
+

@@ -84,7 +84,8 @@ python3 mvp/bedagent_mvp.py story voice \
 
 ## 下一步
 
-1. 双向流式 ASR（麦克风边说边转写）；
-2. Qwen 文本模型接入 Sage 追问（仍走 Blanket）；
-3. 床边手机/Web 推送音频入口；
+1. 双向流式 ASR（麦克风边说边转写）； ✅ `transcribe_stream` + Web 闭环（v0.11，仍为按住说话，非持续开麦）
+2. Qwen 文本模型接入 Sage 追问（仍走 Blanket）； ✅ `--use-llm`
+3. 床边手机/Web 推送音频入口； ✅ `/api/voice/story` + 按住说话
 4. 离线 fallback（本地 Whisper + Piper）。
+5. 持续开麦 VAD 自动分轮。

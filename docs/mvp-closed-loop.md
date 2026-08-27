@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.10.0-mvp (prototype)
-Status: implemented (LLM chapter expansion, story resume, memory sync, unified search, quiet TTS, web draft/speak)
+Product Milestone: v0.11.0-mvp (prototype)
+Status: implemented (streaming ASR partials, voice story closed-loop API, silence gate, hold-to-talk web)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -99,6 +99,16 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    `story characters` / `/characters` with role / desire / conflict extras.
 31. **Web Draft / Speak**  
    Agent UI can generate drafts, expand, resume latest, and speak replies.
+32. **Streaming ASR partials**  
+   `voice transcribe --stream` / `transcribe_stream()` emit growing transcripts (simulated sidecar or DashScope `send_audio_frame`).
+33. **Silence gate**  
+   Near-silent recordings skip bible writes instead of inventing text.
+34. **Voice story API**  
+   `POST /api/voice/story` runs ASR → Sage → TTS in one bedside round trip.
+35. **Voice status / recap**  
+   `voice status` and `voice recap` (speak night pillow of latest session).
+36. **Hold-to-talk Web**  
+   Agent voice mode: press-and-release recording, barge-in stops TTS, optional auto closed-loop.
 
 ## Output contract
 
@@ -175,4 +185,4 @@ python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blank
 1. Add embedding-backed retrieval and rerank for memory/story search.
 2. Add scheduled/automatic retention enforcement using existing report/export path.
 3. Add container/VM adapters behind the same side-effect gate.
-4. Add continuous streaming ASR beyond push-to-talk windows.
+4. Add continuous microphone VAD that auto-segments turns without a hold button.

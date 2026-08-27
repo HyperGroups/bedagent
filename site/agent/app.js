@@ -337,6 +337,30 @@ async function handleMvpRun() {
   }
 }
 
+function stopPlayback() {
+  if (!els.playback) return;
+  try {
+    els.playback.pause();
+    els.playback.currentTime = 0;
+  } catch {
+    /* ignore */
+  }
+}
+
+function showPartials(partials) {
+  const box = document.getElementById("voice-partials");
+  if (!box) return;
+  if (!partials?.length) {
+    box.textContent = "";
+    return;
+  }
+  box.textContent = partials.map((p) => p.text).join(" → ");
+}
+
+function voiceLoopEnabled() {
+  return document.getElementById("chk-voice-loop")?.checked !== false;
+}
+
 async function startRecording() {
   if (!navigator.mediaDevices?.getUserMedia) {
     els.recordStatus.textContent = "浏览器不支持录音";
@@ -346,6 +370,7 @@ async function startRecording() {
     mediaRecorder.stop();
     return;
   }
+  stopPlayback();
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   audioChunks = [];
   mediaRecorder = new MediaRecorder(stream);
@@ -357,10 +382,66 @@ async function startRecording() {
     els.recordStatus.textContent = "录音完成";
     els.recordStatus.classList.remove("recording");
     stream.getTracks().forEach((t) => t.stop());
+    if (voiceLoopEnabled()) {
+      handleVoiceClosedLoop().catch((err) => appendSystem(err.message || String(err)));
+    }
   };
   mediaRecorder.start();
-  els.recordStatus.textContent = "录音中… 再次点击停止";
+  els.recordStatus.textContent = "录音中… 松开或再次点击停止";
   els.recordStatus.classList.add("recording");
+}
+
+async function handleVoiceClosedLoop() {
+  if (!apiBase) {
+    appendSystem("语音闭环需要本地 API");
+    return;
+  }
+  if (!recordedBlob) {
+    appendSystem("请先录音");
+    return;
+  }
+  appendSystem("语音闭环：转写 → Sage → TTS…");
+  const form = new FormData();
+  form.append("audio", recordedBlob, "recording.webm");
+  form.append("title", state.bible.title || "未命名故事");
+  if (remoteStoryId) form.append("story_id", remoteStoryId);
+  form.append("quiet", quietEnabled() ? "1" : "0");
+  form.append("auto_confirm", "1");
+  form.append("include_audio", "1");
+  const res = await fetch(`${apiBase}/api/voice/story`, { method: "POST", body: form });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "voice story failed");
+  showPartials(data.partials || []);
+  if (data.skipped) {
+    appendSystem(`已跳过：${data.skip_reason || data.command || "silence"}`);
+    if (data.command === "/recap" || data.command === "/resume") {
+      handleResumeLatest();
+    }
+    return;
+  }
+  remoteStoryId = data.story_id;
+  localStorage.setItem("bedagent.story.id", remoteStoryId);
+  state.session = data.session;
+  state.session.turns = state.session.turns || [];
+  if (data.transcript && data.agent_reply) {
+    state.session.turns.push({
+      kind: "fragment",
+      fragment: data.transcript,
+      agent_reply: data.agent_reply,
+    });
+  }
+  state.bible = data.bible;
+  persist();
+  refreshRemoteSessions();
+  if (data.reply_audio_base64) {
+    const bytes = Uint8Array.from(atob(data.reply_audio_base64), (c) => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: data.reply_audio_mime || "audio/wav" });
+    els.playback.src = URL.createObjectURL(blob);
+    els.playback.classList.remove("hidden");
+    if (!quietEnabled()) {
+      els.playback.play().catch(() => {});
+    }
+  }
 }
 
 async function handleVoiceTranscribe() {
@@ -372,13 +453,19 @@ async function handleVoiceTranscribe() {
     appendSystem("请先录音");
     return;
   }
+  if (voiceLoopEnabled()) {
+    await handleVoiceClosedLoop();
+    return;
+  }
   appendSystem("正在转写…");
   const form = new FormData();
   form.append("audio", recordedBlob, "recording.webm");
+  form.append("stream", "1");
   try {
     const res = await fetch(`${apiBase}/api/voice/transcribe`, { method: "POST", body: form });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "transcribe failed");
+    showPartials(data.partials || []);
     els.fragmentInput.value = data.text;
     setMode("story");
     handleSendFragment();
@@ -472,7 +559,33 @@ function bindEvents() {
   document.getElementById("btn-send-fragment").addEventListener("click", handleSendFragment);
   document.getElementById("btn-send-answer").addEventListener("click", handleSendAnswer);
   document.getElementById("btn-mvp-run").addEventListener("click", handleMvpRun);
-  document.getElementById("btn-record").addEventListener("click", () => startRecording().catch(console.error));
+  const recordBtn = document.getElementById("btn-record");
+  let usedPointerHold = false;
+  recordBtn.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    usedPointerHold = true;
+    try {
+      recordBtn.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    if (mediaRecorder?.state !== "recording") {
+      startRecording().catch(console.error);
+    }
+  });
+  const stopIfRecording = () => {
+    if (mediaRecorder?.state === "recording") mediaRecorder.stop();
+  };
+  recordBtn.addEventListener("pointerup", stopIfRecording);
+  recordBtn.addEventListener("pointercancel", stopIfRecording);
+  recordBtn.addEventListener("click", (e) => {
+    if (usedPointerHold) {
+      e.preventDefault();
+      usedPointerHold = false;
+      return;
+    }
+    startRecording().catch(console.error);
+  });
   document.getElementById("btn-voice-transcribe").addEventListener("click", handleVoiceTranscribe);
 
   document.getElementById("btn-new-session").addEventListener("click", () => {
