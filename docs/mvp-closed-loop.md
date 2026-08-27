@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.8.0-mvp (prototype)
-Status: implemented (validator + filtered governance views + retrieval controls)
+Product Milestone: v0.11.0-mvp (prototype)
+Status: implemented (streaming ASR partials, voice story closed-loop API, silence gate, hold-to-talk web)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -73,6 +73,42 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    run-level `policy_explain` now includes `schema_version`.
 18. **Explain Validator**  
    `validate-explain` validates schema version and required fields in manifest.
+19. **Story / Voice / Web Agent**  
+   Oral storytelling, DashScope ASR/TTS, and `site/agent/` entry (v0.8 follow-on).
+20. **Optional LLM Sage**  
+   `--use-llm` / `BEDAGENT_LLM=1` enhances story questions via DashScope Qwen (simulated fallback).
+21. **Story Search**  
+   `story search` retrieves across bibles/fragments with CJK-aware TF-IDF.
+22. **Manifest Schema**  
+   run `manifest.json` includes top-level `schema_version`.
+23. **Explain Diff**  
+   `explain-diff` compares two manifests' policy_explain chains.
+24. **Web Story Persistence**  
+   local API stores sessions under `.bedagent/stories/` with list/search endpoints.
+25. **Chapter Expansion**  
+   `story draft --expand` writes prose in the draft sandbox (heuristic, optional Qwen).
+26. **Story Resume**  
+   `story resume` / `--resume` reopens the latest session.
+27. **Story Memory Sync**  
+   oral turns append to the memory journal (`kind=story`) for unified retrieval.
+28. **Unified Search**  
+   `search` / `/api/search` ranks memory + story hits together.
+29. **Quiet / Night TTS**  
+   `--quiet` / `BEDAGENT_TTS_QUIET=1` shortens speech and skips auto-play.
+30. **Character Sheet**  
+   `story characters` / `/characters` with role / desire / conflict extras.
+31. **Web Draft / Speak**  
+   Agent UI can generate drafts, expand, resume latest, and speak replies.
+32. **Streaming ASR partials**  
+   `voice transcribe --stream` / `transcribe_stream()` emit growing transcripts (simulated sidecar or DashScope `send_audio_frame`).
+33. **Silence gate**  
+   Near-silent recordings skip bible writes instead of inventing text.
+34. **Voice story API**  
+   `POST /api/voice/story` runs ASR → Sage → TTS in one bedside round trip.
+35. **Voice status / recap**  
+   `voice status` and `voice recap` (speak night pillow of latest session).
+36. **Hold-to-talk Web**  
+   Agent voice mode: press-and-release recording, barge-in stops TTS, optional auto closed-loop.
 
 ## Output contract
 
@@ -138,14 +174,15 @@ python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blank
 
 ## Current limitations
 
-- No speech input/output yet.
-- No external model API; stage reasoning is heuristic.
+- Speech exists as an optional DashScope adapter; GitHub Pages still needs local API for ASR/TTS.
+- Sage reasoning is heuristic by default; DashScope Qwen is opt-in (`--use-llm` / `BEDAGENT_LLM=1`).
+- Chapter expansion stays in the draft sandbox; it does not rewrite the bible without a later oral turn.
 - No container executor yet; live execution currently focuses on git worktree path.
-- Memory retrieval is weighted lexical-semantic (TF-IDF) with pre-filters; no embedding/rerank pipeline yet.
+- Memory retrieval is weighted lexical-semantic (TF-IDF, CJK-aware) with pre-filters; no embedding/rerank pipeline yet.
 
 ## Next implementation steps
 
-1. Add embedding-backed retrieval and rerank for memory search.
+1. Add embedding-backed retrieval and rerank for memory/story search.
 2. Add scheduled/automatic retention enforcement using existing report/export path.
 3. Add container/VM adapters behind the same side-effect gate.
-4. Add voice adapter as optional input/output layer.
+4. Add continuous microphone VAD that auto-segments turns without a hold button.

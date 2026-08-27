@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import struct
 import wave
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -46,6 +47,19 @@ class SpeakResult:
     byte_size: int
 
 
+@dataclass
+class TranscribeStreamResult:
+    text: str
+    model: str
+    audio_path: str
+    request_id: str
+    partials: list[dict[str, Any]]
+    skipped: bool = False
+    skip_reason: str = ""
+    silence_ratio: float = 0.0
+    command: str | None = None
+
+
 def load_voice_config(path: Path | None = None) -> dict[str, Any]:
     config_path = path or DEFAULT_VOICE_CONFIG_PATH
     payload = json.loads(config_path.read_text(encoding="utf-8"))
@@ -54,10 +68,32 @@ def load_voice_config(path: Path | None = None) -> dict[str, Any]:
     payload.setdefault("tts_voice", "longxiaochun")
     payload.setdefault("sample_rate", 16000)
     payload.setdefault("max_tts_chars", 220)
+    payload.setdefault("quiet_mode", False)
+    payload.setdefault("quiet_max_tts_chars", 72)
     payload.setdefault("secret_block_keywords", [])
     payload.setdefault("region", "cn-beijing")
     payload.setdefault("workspace_id", "")
     payload.setdefault("mic_seconds", 8)
+    payload.setdefault("stream_partial_chars", 8)
+    payload.setdefault("silence_skip_ratio", 0.97)
+    payload.setdefault("stream_frame_bytes", 3200)
+    return payload
+
+
+def tts_quiet_enabled(config: dict[str, Any] | None = None, quiet: bool | None = None) -> bool:
+    if quiet is True:
+        return True
+    if os.environ.get("BEDAGENT_TTS_QUIET", "").lower() in {"1", "true", "yes"}:
+        return True
+    return bool((config or {}).get("quiet_mode"))
+
+
+def apply_quiet_config(config: dict[str, Any] | None, quiet: bool | None = None) -> dict[str, Any]:
+    payload = dict(config or load_voice_config())
+    if tts_quiet_enabled(payload, quiet=quiet):
+        payload["quiet_mode"] = True
+        quiet_limit = int(payload.get("quiet_max_tts_chars", 72))
+        payload["max_tts_chars"] = min(int(payload.get("max_tts_chars", 220)), quiet_limit)
     return payload
 
 
@@ -191,6 +227,197 @@ def transcribe_file(
     )
 
 
+def split_transcript_partials(text: str, step: int = 8) -> list[str]:
+    cleaned = clean_text(text)
+    if not cleaned:
+        return []
+    step = max(2, int(step))
+    partials: list[str] = []
+    if re.search(r"[\u4e00-\u9fff]", cleaned) or " " not in cleaned:
+        for end in range(step, len(cleaned), step):
+            partials.append(cleaned[:end])
+        partials.append(cleaned)
+    else:
+        words = cleaned.split()
+        acc: list[str] = []
+        for word in words:
+            acc.append(word)
+            if len(acc) % max(1, step // 4) == 0 or word == words[-1]:
+                partials.append(" ".join(acc))
+        if not partials or partials[-1] != cleaned:
+            partials.append(cleaned)
+    unique: list[str] = []
+    for item in partials:
+        if item and (not unique or item != unique[-1]):
+            unique.append(item)
+    if unique[-1] != cleaned:
+        unique.append(cleaned)
+    return unique
+
+
+def iter_wav_pcm_chunks(audio_path: Path, frame_bytes: int = 3200) -> list[bytes]:
+    path = audio_path.expanduser().resolve()
+    with wave.open(str(path), "rb") as handle:
+        raw = handle.readframes(handle.getnframes())
+    size = max(640, int(frame_bytes))
+    return [raw[index : index + size] for index in range(0, len(raw), size)] if raw else []
+
+
+def voice_status(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    config = apply_quiet_config(config or load_voice_config())
+    return {
+        "provider": config.get("provider", "dashscope"),
+        "asr_model": config.get("asr_model"),
+        "tts_model": config.get("tts_model"),
+        "tts_voice": config.get("tts_voice"),
+        "has_key": bool(os.environ.get("DASHSCOPE_API_KEY", "").strip()),
+        "tts_simulate": os.environ.get("BEDAGENT_TTS_SIMULATE", "").lower() in {"1", "true", "yes"},
+        "quiet": bool(config.get("quiet_mode")),
+        "stream_partial_chars": int(config.get("stream_partial_chars", 8)),
+        "silence_skip_ratio": float(config.get("silence_skip_ratio", 0.97)),
+    }
+
+
+def transcribe_stream(
+    audio_path: Path,
+    config: dict[str, Any] | None = None,
+    config_path: Path | None = None,
+    on_partial: Callable[[str, bool], None] | None = None,
+    stream: bool = True,
+) -> TranscribeStreamResult:
+    path = audio_path.expanduser().resolve()
+    if not path.exists():
+        raise VoiceAdapterError(f"Audio file not found: {path}")
+    config = apply_quiet_config(config or load_voice_config(config_path))
+    silence_ratio = 0.0
+    try:
+        silence_ratio = wav_silence_ratio(path)
+    except Exception:
+        silence_ratio = 0.0
+
+    def emit(text: str, is_final: bool, model: str, request_id: str, skipped: bool = False, reason: str = "", command: str | None = None, extra_partials: list[str] | None = None) -> TranscribeStreamResult:
+        step = int(config.get("stream_partial_chars", 8))
+        parts = extra_partials if extra_partials is not None else (split_transcript_partials(text, step) if text else [])
+        partials = [{"index": idx, "text": item, "is_final": bool(is_final and item == parts[-1])} for idx, item in enumerate(parts, start=1)]
+        if on_partial:
+            for item in partials:
+                on_partial(item["text"], bool(item["is_final"]))
+        return TranscribeStreamResult(
+            text=text,
+            model=model,
+            audio_path=str(path),
+            request_id=request_id,
+            partials=partials,
+            skipped=skipped,
+            skip_reason=reason,
+            silence_ratio=round(silence_ratio, 4),
+            command=command,
+        )
+
+    simulated = transcribe_simulated(path)
+    if simulated is not None:
+        mapped = map_voice_command(simulated.text, config)
+        return emit(
+            simulated.text,
+            True,
+            simulated.model,
+            simulated.request_id,
+            skipped=bool(mapped),
+            reason=f"command:{mapped}" if mapped else "",
+            command=mapped,
+        )
+
+    skip_ratio = float(config.get("silence_skip_ratio", 0.97))
+    if silence_ratio >= skip_ratio:
+        return emit("", True, "silence-gate", "silence", skipped=True, reason="silence", extra_partials=[])
+
+    if stream:
+        try:
+            live = _transcribe_dashscope_stream(path, config, on_partial)
+            if live is not None:
+                mapped = map_voice_command(live.text, config)
+                live.command = mapped
+                if mapped:
+                    live.skipped = True
+                    live.skip_reason = f"command:{mapped}"
+                live.silence_ratio = round(silence_ratio, 4)
+                return live
+        except Exception:
+            pass
+
+    final = transcribe_file(path, config=config, config_path=config_path)
+    mapped = map_voice_command(final.text, config)
+    return emit(
+        final.text,
+        True,
+        final.model,
+        final.request_id,
+        skipped=bool(mapped),
+        reason=f"command:{mapped}" if mapped else "",
+        command=mapped,
+    )
+
+
+def _transcribe_dashscope_stream(
+    audio_path: Path,
+    config: dict[str, Any],
+    on_partial: Callable[[str, bool], None] | None,
+) -> TranscribeStreamResult | None:
+    if not os.environ.get("DASHSCOPE_API_KEY", "").strip():
+        return None
+    if detect_audio_format(audio_path) != "wav":
+        return None
+    configure_dashscope(config)
+    from dashscope.audio.asr import Recognition, RecognitionCallback
+
+    collected: list[str] = []
+    errors: list[str] = []
+
+    class PartialCallback(RecognitionCallback):
+        def on_event(self, result) -> None:  # noqa: ANN001
+            payload = result.get_sentence() if hasattr(result, "get_sentence") else result
+            text = extract_transcript_sentence(payload)
+            if not text:
+                return
+            collected.append(text)
+            if on_partial:
+                is_final = bool(getattr(result, "is_sentence_end", lambda: False)())
+                on_partial(text, is_final)
+
+        def on_error(self, result) -> None:  # noqa: ANN001
+            errors.append(str(getattr(result, "message", result)))
+
+    recognition = Recognition(
+        model=config["asr_model"],
+        format="pcm",
+        sample_rate=int(config["sample_rate"]),
+        callback=PartialCallback(),
+    )
+    recognition.start()
+    try:
+        for chunk in iter_wav_pcm_chunks(audio_path, int(config.get("stream_frame_bytes", 3200))):
+            recognition.send_audio_frame(chunk)
+    finally:
+        recognition.stop()
+    if errors and not collected:
+        raise VoiceAdapterError(errors[0])
+    if not collected:
+        return None
+    unique: list[str] = []
+    for item in collected:
+        if not unique or item != unique[-1]:
+            unique.append(item)
+    final = unique[-1]
+    partials = [{"index": idx, "text": item, "is_final": item == final} for idx, item in enumerate(unique, start=1)]
+    return TranscribeStreamResult(
+        text=final,
+        model=config["asr_model"],
+        audio_path=str(audio_path),
+        request_id=str(getattr(recognition, "get_last_request_id", lambda: "")() or ""),
+        partials=partials,
+    )
+
+
 def sanitize_tts_text(text: str, config: dict[str, Any]) -> str:
     cleaned = clean_text(text)
     lowered = cleaned.lower()
@@ -204,7 +431,7 @@ def sanitize_tts_text(text: str, config: dict[str, Any]) -> str:
 
 
 def build_tts_summary(agent_reply: str, config: dict[str, Any] | None = None) -> str:
-    config = config or load_voice_config()
+    config = apply_quiet_config(config or load_voice_config())
     lines = [line.strip() for line in agent_reply.splitlines() if line.strip()]
     if not lines:
         return "收到。"
@@ -222,6 +449,8 @@ def build_tts_summary(agent_reply: str, config: dict[str, Any] | None = None) ->
     summary = "。".join(item for item in preferred if item)
     if not summary:
         summary = lines[0]
+    if tts_quiet_enabled(config):
+        summary = preferred[0] if preferred else lines[0]
     return sanitize_tts_text(summary, config)
 
 
@@ -231,7 +460,7 @@ def synthesize_speech(
     config: dict[str, Any] | None = None,
     config_path: Path | None = None,
 ) -> SpeakResult:
-    config = config or load_voice_config(config_path)
+    config = apply_quiet_config(config or load_voice_config(config_path))
     speak_text = sanitize_tts_text(text, config)
     if not speak_text:
         raise VoiceAdapterError("TTS text is empty after sanitization.")
@@ -272,27 +501,49 @@ def synthesize_speech(
     )
 
 
+SLASH_BY_COMMAND = {
+    "recap": "/recap",
+    "quit": "/quit",
+    "pause": "/pause",
+    "cancel": "/quit",
+    "continue": "/continue",
+    "draft": "/draft",
+    "export": "/export",
+    "expand": "/expand",
+    "quiet": "/quiet",
+    "characters": "/characters",
+    "answer": "/answer",
+    "resume": "/resume",
+}
+
+
 def map_voice_command(text: str, config: dict[str, Any]) -> str | None:
     normalized = clean_text(text).lower()
     if not normalized:
         return None
     if normalized.startswith("/"):
-        return normalized
+        return normalized.split()[0]
     commands = config.get("voice_commands", {})
     for command, phrases in commands.items():
         for phrase in phrases:
             if normalized == phrase.lower() or normalized.startswith(phrase.lower()):
-                if command == "recap":
-                    return "/recap"
-                if command == "quit":
-                    return "/quit"
-                if command == "pause":
-                    return "/pause"
-                if command == "cancel":
-                    return "/quit"
-                if command == "continue":
-                    return "/continue"
+                return SLASH_BY_COMMAND.get(command, f"/{command}")
     return None
+
+
+def wav_silence_ratio(audio_path: Path, threshold: int = 400) -> float:
+    path = audio_path.expanduser().resolve()
+    with wave.open(str(path), "rb") as handle:
+        channels = max(1, handle.getnchannels())
+        width = handle.getsampwidth()
+        frames = handle.getnframes()
+        raw = handle.readframes(frames)
+    sample_count = frames * channels
+    if sample_count <= 0 or width != 2 or len(raw) < sample_count * 2:
+        return 1.0 if sample_count <= 0 else 0.0
+    samples = struct.unpack("<" + "h" * sample_count, raw[: sample_count * 2])
+    silent = sum(1 for sample in samples if abs(sample) < threshold)
+    return silent / sample_count
 
 
 def record_microphone_wav(
@@ -354,6 +605,7 @@ def voice_turn_paths(voice_dir: Path, turn_number: int) -> dict[str, Path]:
         "transcript": voice_dir / f"{stem}-transcript.txt",
         "reply_text": voice_dir / f"{stem}-reply.txt",
         "reply_audio": voice_dir / f"{stem}-reply.wav",
+        "partials": voice_dir / f"{stem}-partials.json",
     }
 
 
@@ -362,8 +614,14 @@ def persist_voice_turn_artifacts(
     transcript: str,
     agent_reply: str,
     input_audio: Path | None = None,
+    partials: list[dict[str, Any]] | None = None,
 ) -> None:
     if input_audio and input_audio.exists():
         paths["input"].write_bytes(input_audio.read_bytes())
     paths["transcript"].write_text(transcript + "\n", encoding="utf-8")
     paths["reply_text"].write_text(agent_reply + "\n", encoding="utf-8")
+    if partials is not None and "partials" in paths:
+        paths["partials"].write_text(
+            json.dumps({"partials": partials}, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )

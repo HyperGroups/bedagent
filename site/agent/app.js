@@ -1,4 +1,6 @@
 import {
+  buildChapterProse,
+  buildChapterSketch,
   buildOutlineMarkdown,
   downloadText,
   loadSession,
@@ -15,6 +17,7 @@ let apiBase = null;
 let mediaRecorder = null;
 let audioChunks = [];
 let recordedBlob = null;
+let remoteStoryId = localStorage.getItem("bedagent.story.id") || "";
 
 const els = {
   modeCards: document.querySelectorAll(".mode-card"),
@@ -34,12 +37,20 @@ const els = {
   bibleThreads: document.getElementById("bible-threads"),
   bibleQuestions: document.getElementById("bible-questions"),
   bibleTimeline: document.getElementById("bible-timeline"),
+  sessionPicker: document.getElementById("session-picker"),
+  storySearch: document.getElementById("story-search"),
+  searchHits: document.getElementById("search-hits"),
   apiStatus: document.getElementById("api-status"),
   apiStatusCard: document.getElementById("api-status-card"),
   apiBaseHint: document.getElementById("api-base-hint"),
   recordStatus: document.getElementById("record-status"),
   playback: document.getElementById("playback"),
+  quiet: document.getElementById("chk-quiet"),
 };
+
+function quietEnabled() {
+  return Boolean(els.quiet?.checked);
+}
 
 function renderTranscript() {
   els.transcript.innerHTML = "";
@@ -85,7 +96,9 @@ function renderBible() {
   els.bibleCharacters.innerHTML = "";
   for (const c of bible.characters) {
     const li = document.createElement("li");
-    li.textContent = `${c.name}：${(c.notes || []).slice(0, 2).join("；") || "待补充"}`;
+    const role = c.role === "protagonist" ? "主角" : c.role === "antagonist" ? "对手" : c.role === "ally" ? "同伴" : "";
+    const extra = [role, c.desire ? `想要${c.desire}` : ""].filter(Boolean).join(" · ");
+    li.textContent = `${c.name}${extra ? `（${extra}）` : ""}：${(c.notes || []).slice(0, 2).join("；") || "待补充"}`;
     els.bibleCharacters.appendChild(li);
   }
 
@@ -143,9 +156,13 @@ async function detectApi() {
       const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) {
         apiBase = base;
-        els.apiStatus.textContent = `已连接 ${base}`;
+        const health = await res.json();
+        const llmNote = health.llm?.usable ? " · LLM 可用" : "";
+        const quietNote = quietEnabled() ? " · 夜间" : "";
+        els.apiStatus.textContent = `已连接 ${base} · ${health.product_milestone || "v0.10"}${llmNote}${quietNote}`;
         els.apiStatus.className = "api-status-value ok";
         els.apiBaseHint.textContent = `API: ${base}`;
+        await refreshRemoteSessions();
         return;
       }
     } catch {
@@ -157,10 +174,72 @@ async function detectApi() {
   els.apiStatus.className = "api-status-value fail";
 }
 
-function handleSendFragment() {
+async function refreshRemoteSessions() {
+  if (!apiBase || !els.sessionPicker) return;
+  try {
+    const res = await fetch(`${apiBase}/api/story/list`);
+    const data = await res.json();
+    const items = data.items || [];
+    els.sessionPicker.innerHTML = '<option value="">本机草稿</option>';
+    for (const item of items) {
+      const opt = document.createElement("option");
+      opt.value = item.story_id;
+      opt.textContent = `${item.title} (${item.turn_count} 回合)`;
+      if (item.story_id === remoteStoryId) opt.selected = true;
+      els.sessionPicker.appendChild(opt);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function loadRemoteStory(storyId) {
+  if (!apiBase || !storyId) return;
+  const res = await fetch(`${apiBase}/api/story/${encodeURIComponent(storyId)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "load story failed");
+  remoteStoryId = storyId;
+  localStorage.setItem("bedagent.story.id", storyId);
+  state.session = data.session;
+  state.session.turns = state.session.turns || [];
+  state.bible = data.bible;
+  persist();
+}
+
+async function handleSendFragment() {
   const text = els.fragmentInput.value.trim();
   if (!text) return;
   try {
+    if (apiBase) {
+      const res = await fetch(`${apiBase}/api/story/fragment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fragment: text,
+          title: state.bible.title,
+          story_id: remoteStoryId || undefined,
+          auto_confirm: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "story fragment failed");
+      remoteStoryId = data.story_id;
+      localStorage.setItem("bedagent.story.id", remoteStoryId);
+      state.session = data.session;
+      state.session.turns = state.session.turns || [];
+      if (data.agent_reply) {
+        state.session.turns.push({
+          kind: "fragment",
+          fragment: text,
+          agent_reply: data.agent_reply,
+        });
+      }
+      state.bible = data.bible;
+      els.fragmentInput.value = "";
+      persist();
+      refreshRemoteSessions();
+      return;
+    }
     const result = processFragment(state.session, state.bible, text, true);
     state.session = result.session;
     state.bible = result.bible;
@@ -171,15 +250,60 @@ function handleSendFragment() {
   }
 }
 
-function handleSendAnswer() {
+async function handleSendAnswer() {
   const text = els.fragmentInput.value.trim();
   if (!text) return;
   try {
+    if (apiBase && remoteStoryId) {
+      const res = await fetch(`${apiBase}/api/story/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer: text, story_id: remoteStoryId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "story answer failed");
+      state.session = data.session;
+      state.session.turns = state.session.turns || [];
+      state.session.turns.push({ kind: "answer", answer: text, agent_reply: data.agent_reply });
+      state.bible = data.bible;
+      els.fragmentInput.value = "";
+      persist();
+      return;
+    }
     const result = processAnswer(state.session, state.bible, text);
     state.session = result.session;
     state.bible = result.bible;
     els.fragmentInput.value = "";
     persist();
+  } catch (err) {
+    appendSystem(err.message || String(err));
+  }
+}
+
+async function handleStorySearch() {
+  const query = (els.storySearch?.value || "").trim();
+  if (!query || !els.searchHits) return;
+  els.searchHits.innerHTML = "";
+  if (!apiBase) {
+    appendSystem("故事检索需要本地 API");
+    return;
+  }
+  try {
+    const res = await fetch(`${apiBase}/api/story/search?q=${encodeURIComponent(query)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "search failed");
+    for (const hit of data.hits || []) {
+      const li = document.createElement("li");
+      li.textContent = `${hit.score.toFixed(2)} ${hit.entry.title}: ${hit.entry.main_thread}`;
+      li.style.cursor = "pointer";
+      li.addEventListener("click", () => loadRemoteStory(hit.entry.story_id).catch((err) => appendSystem(err.message)));
+      els.searchHits.appendChild(li);
+    }
+    if (!(data.hits || []).length) {
+      const li = document.createElement("li");
+      li.textContent = "没有匹配";
+      els.searchHits.appendChild(li);
+    }
   } catch (err) {
     appendSystem(err.message || String(err));
   }
@@ -213,6 +337,30 @@ async function handleMvpRun() {
   }
 }
 
+function stopPlayback() {
+  if (!els.playback) return;
+  try {
+    els.playback.pause();
+    els.playback.currentTime = 0;
+  } catch {
+    /* ignore */
+  }
+}
+
+function showPartials(partials) {
+  const box = document.getElementById("voice-partials");
+  if (!box) return;
+  if (!partials?.length) {
+    box.textContent = "";
+    return;
+  }
+  box.textContent = partials.map((p) => p.text).join(" → ");
+}
+
+function voiceLoopEnabled() {
+  return document.getElementById("chk-voice-loop")?.checked !== false;
+}
+
 async function startRecording() {
   if (!navigator.mediaDevices?.getUserMedia) {
     els.recordStatus.textContent = "浏览器不支持录音";
@@ -222,6 +370,7 @@ async function startRecording() {
     mediaRecorder.stop();
     return;
   }
+  stopPlayback();
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   audioChunks = [];
   mediaRecorder = new MediaRecorder(stream);
@@ -233,10 +382,66 @@ async function startRecording() {
     els.recordStatus.textContent = "录音完成";
     els.recordStatus.classList.remove("recording");
     stream.getTracks().forEach((t) => t.stop());
+    if (voiceLoopEnabled()) {
+      handleVoiceClosedLoop().catch((err) => appendSystem(err.message || String(err)));
+    }
   };
   mediaRecorder.start();
-  els.recordStatus.textContent = "录音中… 再次点击停止";
+  els.recordStatus.textContent = "录音中… 松开或再次点击停止";
   els.recordStatus.classList.add("recording");
+}
+
+async function handleVoiceClosedLoop() {
+  if (!apiBase) {
+    appendSystem("语音闭环需要本地 API");
+    return;
+  }
+  if (!recordedBlob) {
+    appendSystem("请先录音");
+    return;
+  }
+  appendSystem("语音闭环：转写 → Sage → TTS…");
+  const form = new FormData();
+  form.append("audio", recordedBlob, "recording.webm");
+  form.append("title", state.bible.title || "未命名故事");
+  if (remoteStoryId) form.append("story_id", remoteStoryId);
+  form.append("quiet", quietEnabled() ? "1" : "0");
+  form.append("auto_confirm", "1");
+  form.append("include_audio", "1");
+  const res = await fetch(`${apiBase}/api/voice/story`, { method: "POST", body: form });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "voice story failed");
+  showPartials(data.partials || []);
+  if (data.skipped) {
+    appendSystem(`已跳过：${data.skip_reason || data.command || "silence"}`);
+    if (data.command === "/recap" || data.command === "/resume") {
+      handleResumeLatest();
+    }
+    return;
+  }
+  remoteStoryId = data.story_id;
+  localStorage.setItem("bedagent.story.id", remoteStoryId);
+  state.session = data.session;
+  state.session.turns = state.session.turns || [];
+  if (data.transcript && data.agent_reply) {
+    state.session.turns.push({
+      kind: "fragment",
+      fragment: data.transcript,
+      agent_reply: data.agent_reply,
+    });
+  }
+  state.bible = data.bible;
+  persist();
+  refreshRemoteSessions();
+  if (data.reply_audio_base64) {
+    const bytes = Uint8Array.from(atob(data.reply_audio_base64), (c) => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: data.reply_audio_mime || "audio/wav" });
+    els.playback.src = URL.createObjectURL(blob);
+    els.playback.classList.remove("hidden");
+    if (!quietEnabled()) {
+      els.playback.play().catch(() => {});
+    }
+  }
 }
 
 async function handleVoiceTranscribe() {
@@ -248,16 +453,99 @@ async function handleVoiceTranscribe() {
     appendSystem("请先录音");
     return;
   }
+  if (voiceLoopEnabled()) {
+    await handleVoiceClosedLoop();
+    return;
+  }
   appendSystem("正在转写…");
   const form = new FormData();
   form.append("audio", recordedBlob, "recording.webm");
+  form.append("stream", "1");
   try {
     const res = await fetch(`${apiBase}/api/voice/transcribe`, { method: "POST", body: form });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "transcribe failed");
+    showPartials(data.partials || []);
     els.fragmentInput.value = data.text;
     setMode("story");
     handleSendFragment();
+  } catch (err) {
+    appendSystem(err.message || String(err));
+  }
+}
+
+async function handleResumeLatest() {
+  if (!apiBase) {
+    appendSystem("恢复最近会话需要本地 API");
+    return;
+  }
+  try {
+    const res = await fetch(`${apiBase}/api/story/latest`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "没有可恢复的故事");
+    await loadRemoteStory(data.story_id);
+    appendSystem(`已恢复 ${data.story_id}`);
+    refreshRemoteSessions();
+  } catch (err) {
+    appendSystem(err.message || String(err));
+  }
+}
+
+async function handleDraft(expand = false) {
+  try {
+    if (apiBase && remoteStoryId) {
+      const res = await fetch(`${apiBase}/api/story/draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          story_id: remoteStoryId,
+          expand,
+          night: quietEnabled(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "draft failed");
+      const text = expand ? data.prose || data.sketch : data.sketch || data.outline;
+      appendMessage("agent", expand ? "扩写" : "草稿", text);
+      els.transcript.scrollTop = els.transcript.scrollHeight;
+      return;
+    }
+    const text = expand ? buildChapterProse(state.session, state.bible) : buildChapterSketch(state.session, state.bible);
+    appendMessage("agent", expand ? "扩写" : "草稿", text);
+    downloadText(`${state.bible.title || "story"}-${expand ? "prose" : "sketch"}.md`, text);
+  } catch (err) {
+    appendSystem(err.message || String(err));
+  }
+}
+
+async function handleSpeak() {
+  const last = [...(state.session.turns || [])].reverse().find((t) => t.agent_reply);
+  const text = last?.agent_reply || state.bible.main_thread || "";
+  if (!text) {
+    appendSystem("还没有可朗读的内容");
+    return;
+  }
+  if (!apiBase) {
+    appendSystem("朗读需要本地 API");
+    return;
+  }
+  appendSystem(quietEnabled() ? "夜间朗读中…" : "朗读中…");
+  try {
+    const res = await fetch(`${apiBase}/api/voice/speak`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, quiet: quietEnabled() }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "speak failed");
+    }
+    const blob = await res.blob();
+    els.playback.src = URL.createObjectURL(blob);
+    els.playback.classList.remove("hidden");
+    if (!quietEnabled()) {
+      els.playback.play().catch(() => {});
+    }
   } catch (err) {
     appendSystem(err.message || String(err));
   }
@@ -271,14 +559,56 @@ function bindEvents() {
   document.getElementById("btn-send-fragment").addEventListener("click", handleSendFragment);
   document.getElementById("btn-send-answer").addEventListener("click", handleSendAnswer);
   document.getElementById("btn-mvp-run").addEventListener("click", handleMvpRun);
-  document.getElementById("btn-record").addEventListener("click", () => startRecording().catch(console.error));
+  const recordBtn = document.getElementById("btn-record");
+  let usedPointerHold = false;
+  recordBtn.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    usedPointerHold = true;
+    try {
+      recordBtn.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    if (mediaRecorder?.state !== "recording") {
+      startRecording().catch(console.error);
+    }
+  });
+  const stopIfRecording = () => {
+    if (mediaRecorder?.state === "recording") mediaRecorder.stop();
+  };
+  recordBtn.addEventListener("pointerup", stopIfRecording);
+  recordBtn.addEventListener("pointercancel", stopIfRecording);
+  recordBtn.addEventListener("click", (e) => {
+    if (usedPointerHold) {
+      e.preventDefault();
+      usedPointerHold = false;
+      return;
+    }
+    startRecording().catch(console.error);
+  });
   document.getElementById("btn-voice-transcribe").addEventListener("click", handleVoiceTranscribe);
 
   document.getElementById("btn-new-session").addEventListener("click", () => {
     const title = prompt("故事标题", state.bible.title || "未命名故事");
     if (title === null) return;
+    remoteStoryId = "";
+    localStorage.removeItem("bedagent.story.id");
     state = resetSession(title || "未命名故事");
     persist();
+  });
+
+  els.sessionPicker?.addEventListener("change", () => {
+    const id = els.sessionPicker.value;
+    if (!id) return;
+    loadRemoteStory(id).catch((err) => appendSystem(err.message || String(err)));
+  });
+
+  document.getElementById("btn-story-search")?.addEventListener("click", handleStorySearch);
+  els.storySearch?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleStorySearch();
+    }
   });
 
   document.getElementById("btn-export-md").addEventListener("click", () => {
@@ -292,6 +622,16 @@ function bindEvents() {
     );
   });
 
+  document.getElementById("btn-resume")?.addEventListener("click", () => {
+    handleResumeLatest().catch((err) => appendSystem(err.message || String(err)));
+  });
+  document.getElementById("btn-draft")?.addEventListener("click", () => handleDraft(false));
+  document.getElementById("btn-expand")?.addEventListener("click", () => handleDraft(true));
+  document.getElementById("btn-speak")?.addEventListener("click", () => handleSpeak());
+  els.quiet?.addEventListener("change", () => {
+    localStorage.setItem("bedagent.quiet", quietEnabled() ? "1" : "0");
+  });
+
   els.fragmentInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
@@ -302,5 +642,8 @@ function bindEvents() {
 
 bindEvents();
 setMode("story");
+if (localStorage.getItem("bedagent.quiet") === "1" && els.quiet) {
+  els.quiet.checked = true;
+}
 persist();
 detectApi();

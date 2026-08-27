@@ -63,7 +63,7 @@ CATEGORY_HINTS: dict[str, tuple[str, ...]] = {
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 def normalize_fragment(value: str) -> str:
@@ -371,13 +371,54 @@ def stage_story_focus(fragment: str, sage: dict[str, Any]) -> dict[str, Any]:
     return {"decisions": decisions}
 
 
-def upsert_character(bible: dict[str, Any], name: str, note: str) -> None:
+def infer_character_extras(fragment: str, name: str) -> dict[str, str]:
+    extras = {"role": "", "desire": "", "conflict": ""}
+    if any(key in fragment for key in ("主角", "主人公", "protagonist")):
+        extras["role"] = "protagonist"
+    elif any(key in fragment for key in ("反派", "对手", "villain", "antagonist")):
+        extras["role"] = "antagonist"
+    elif any(key in fragment for key in ("同伴", "搭档", "盟友", "ally")):
+        extras["role"] = "ally"
+    escaped = re.escape(name)
+    desire = re.search(
+        rf"{escaped}.{{0,16}}(?:想要|渴望|想)([^。！？\n]{{2,30}})",
+        fragment,
+    )
+    if desire:
+        extras["desire"] = clean_text(desire.group(1))
+    conflict = re.search(
+        rf"{escaped}.{{0,16}}(?:害怕|瞒着|冲突|对抗)([^。！？\n]{{2,30}})",
+        fragment,
+    )
+    if conflict:
+        extras["conflict"] = clean_text(conflict.group(1))
+    return extras
+
+
+def upsert_character(
+    bible: dict[str, Any],
+    name: str,
+    note: str,
+    extras: dict[str, str] | None = None,
+) -> None:
+    extras = extras or {}
     for item in bible["characters"]:
         if item["name"] == name:
             if note and note not in item["notes"]:
                 item["notes"].append(note)
+            for key in ("role", "desire", "conflict"):
+                if extras.get(key) and not item.get(key):
+                    item[key] = extras[key]
             return
-    bible["characters"].append({"name": name, "notes": [note] if note else []})
+    bible["characters"].append(
+        {
+            "name": name,
+            "notes": [note] if note else [],
+            "role": extras.get("role", ""),
+            "desire": extras.get("desire", ""),
+            "conflict": extras.get("conflict", ""),
+        }
+    )
 
 
 def upsert_plot_thread(bible: dict[str, Any], label: str, action: str, note: str) -> None:
@@ -406,7 +447,7 @@ def stage_story_synthesize(
     updated["turn_count"] = turn_number
 
     for name in extract_character_hints(fragment):
-        upsert_character(updated, name, sage["recap"])
+        upsert_character(updated, name, sage["recap"], infer_character_extras(fragment, name))
 
     for decision in focus["decisions"]:
         if decision["action"] != "prune":
@@ -490,7 +531,7 @@ def build_agent_reply(
         lines.append(f"人物卡：{names}")
     if bible.get("open_questions"):
         lines.append(f"待回答：{len(bible['open_questions'])} 条（可用 /answer 回复）")
-    lines.append("命令：/answer /draft /export /recap /questions /quit")
+    lines.append("命令：/answer /draft /expand /characters /export /recap /questions /quit")
     return "\n".join(lines)
 
 
@@ -537,6 +578,46 @@ def resolve_story_paths(story_root: Path, story_id: str | None, title: str | Non
     return StoryPaths(story_root / f"{ts}-{slug[:24]}")
 
 
+def latest_story_session(story_root: Path) -> dict[str, Any] | None:
+    items = list_story_sessions(story_root)
+    return items[0] if items else None
+
+
+def resolve_resume_story_id(story_root: Path, story_id: str | None, resume: bool) -> str | None:
+    if story_id:
+        return story_id
+    if not resume:
+        return None
+    latest = latest_story_session(story_root)
+    return latest["story_id"] if latest else None
+
+
+def append_story_memory(
+    journal_path: Path | None,
+    paths: StoryPaths,
+    turn: dict[str, Any],
+    bible: dict[str, Any],
+) -> dict[str, Any] | None:
+    if journal_path is None:
+        return None
+    from bedagent_mvp import append_memory_entry
+
+    entry = {
+        "recorded_at": turn.get("recorded_at") or now_iso(),
+        "run_id": f"story:{paths.root.name}:turn:{turn.get('turn', 0)}",
+        "kind": "story",
+        "story_id": paths.root.name,
+        "title": bible.get("title", ""),
+        "idea": turn.get("fragment") or turn.get("answer") or "",
+        "risk_level": (turn.get("blanket") or {}).get("risk_level", "green"),
+        "act_status": "applied" if turn.get("applied") else "parked",
+        "pillow_note": first_sentence(bible.get("main_thread", ""), max_len=100),
+    }
+    result = append_memory_entry(journal_path=journal_path, entry=entry)
+    result["entry"] = entry
+    return result
+
+
 def load_story_state(paths: StoryPaths, title: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
     session = load_json(paths.session, default_session(title or "未命名故事"))
     bible = ensure_bible_schema(load_json(paths.bible, empty_bible(session.get("title", title or "未命名故事"))))
@@ -565,6 +646,8 @@ def process_fragment(
     auto_confirm: bool = False,
     non_interactive: bool = False,
     input_fn: Callable[[str], str] = input,
+    use_llm: bool = False,
+    memory_journal_path: Path | None = None,
 ) -> dict[str, Any]:
     text = normalize_fragment(fragment)
     if not text:
@@ -573,6 +656,12 @@ def process_fragment(
     policy = policy or load_story_blanket_policy()
     bible = ensure_bible_schema(bible)
     sage = stage_story_sage(text, bible)
+    try:
+        from llm_adapter import enhance_story_sage
+
+        sage = enhance_story_sage(text, bible, sage, explicit=use_llm if use_llm else None)
+    except Exception:
+        sage["llm"] = {"used": False, "model": "heuristic", "provider": "none", "reason": "adapter unavailable"}
     focus = stage_story_focus(text, sage)
     risk = classify_story_blanket_risk(text, bible, sage["main_thread"], policy)
     blanket = stage_story_blanket(risk, policy)
@@ -611,6 +700,7 @@ def process_fragment(
 
     append_ndjson(paths.turns, turn)
     write_json(paths.session, session)
+    memory = append_story_memory(memory_journal_path, paths, turn, updated_bible)
 
     return {
         "turn": turn,
@@ -620,6 +710,7 @@ def process_fragment(
         "blanket": blanket,
         "confirm": confirm,
         "applied": confirm["approved"],
+        "memory": memory,
         "paths": {
             "root": str(paths.root),
             "session": str(paths.session),
@@ -634,6 +725,7 @@ def process_answer(
     session: dict[str, Any],
     bible: dict[str, Any],
     resolve_count: int = 3,
+    memory_journal_path: Path | None = None,
 ) -> dict[str, Any]:
     text = normalize_fragment(answer)
     if not text:
@@ -655,7 +747,7 @@ def process_answer(
     bible["updated_at"] = now_iso()
 
     for name in extract_character_hints(text):
-        upsert_character(bible, name, text)
+        upsert_character(bible, name, text, infer_character_extras(text, name))
 
     turn_number = int(session.get("turn_count", 0)) + 1
     timeline = list(bible.get("timeline", []))
@@ -698,6 +790,7 @@ def process_answer(
     append_ndjson(paths.turns, turn)
     write_json(paths.bible, bible)
     write_json(paths.session, session)
+    memory = append_story_memory(memory_journal_path, paths, turn, bible)
 
     return {
         "turn": turn,
@@ -706,6 +799,7 @@ def process_answer(
         "agent_reply": agent_reply,
         "resolved_questions": to_resolve,
         "paths": {"root": str(paths.root), "bible": str(paths.bible)},
+        "memory": memory,
     }
 
 
@@ -750,6 +844,113 @@ def build_chapter_sketch(bible: dict[str, Any], chapter_number: int) -> str:
 
     lines.extend(["", "## 口述续写提示", "- 下一段可以直接从这里接着讲：场景、冲突、对白。"])
     return "\n".join(lines) + "\n"
+
+
+def build_night_pillow_note(bible: dict[str, Any], session: dict[str, Any] | None = None) -> str:
+    open_n = len(bible.get("open_questions") or [])
+    turns = (session or {}).get("turn_count", bible.get("turn_count", 0))
+    thread = first_sentence(bible.get("main_thread", ""), max_len=48)
+    return f"{thread} 回合 {turns}。待对齐 {open_n} 条。"
+
+
+def build_character_sheet(bible: dict[str, Any]) -> str:
+    title = bible.get("title", "未命名故事")
+    lines = [f"# {title} — 人物卡", "", f"> 生成于 {now_iso()}", ""]
+    characters = bible.get("characters") or []
+    if not characters:
+        lines.append("（尚未建立人物卡。口述时可以说「名叫…」或「主角叫…」。）")
+        return "\n".join(lines) + "\n"
+    role_labels = {
+        "protagonist": "主角",
+        "antagonist": "对手",
+        "ally": "同伴",
+        "": "未标注",
+    }
+    for item in characters:
+        role = role_labels.get(item.get("role", ""), item.get("role") or "未标注")
+        lines.append(f"## {item.get('name', '未命名')}（{role}）")
+        if item.get("desire"):
+            lines.append(f"- 欲望：{item['desire']}")
+        if item.get("conflict"):
+            lines.append(f"- 冲突：{item['conflict']}")
+        notes = item.get("notes") or []
+        if notes:
+            lines.append("- 笔记：")
+            for note in notes[-4:]:
+                lines.append(f"  - {note}")
+        else:
+            lines.append("- 笔记：待补充")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def build_chapter_prose(bible: dict[str, Any], chapter_number: int) -> str:
+    title = bible.get("title", "未命名故事")
+    main = bible.get("main_thread", "")
+    recap = bible.get("recent_recap") or main
+    characters = bible.get("characters") or []
+    names = "、".join(item.get("name", "") for item in characters[:4] if item.get("name")) or "还没点名的人"
+    setting = bible.get("setting") or {}
+    place = setting.get("place") or "尚未标明的场景"
+    active = [item for item in bible.get("plot_threads", []) if item.get("status") == "active"]
+    parked = [item for item in bible.get("plot_threads", []) if item.get("status") == "parked"]
+    questions = bible.get("open_questions") or []
+
+    paragraphs = [
+        f"{recap}空气还没散。{names}停在{place}里，谁也不先把下一句说完。",
+        f"这一章必须碰到主线：{main}。旁支可以亮一下，但不能把镜头抢走。",
+    ]
+    if active:
+        labels = "；".join(first_sentence(item["label"], 40) for item in active[:3])
+        paragraphs.append(f"眼前先处理：{labels}。")
+    if parked:
+        labels = "；".join(first_sentence(item["label"], 36) for item in parked[:3])
+        paragraphs.append(f"可以先不碰的伏笔：{labels}。")
+    if characters:
+        desire = next((item for item in characters if item.get("desire")), None)
+        if desire:
+            paragraphs.append(f"{desire['name']}想要{desire['desire']}。这个欲望现在必须付出代价，或者被当场挡住。")
+    if questions:
+        paragraphs.append(f"写下去之前还差一个答案：{questions[-1]}")
+    paragraphs.append("下一段口述从冲突落地处接着讲：谁先动，谁先瞒，谁先付出代价。")
+
+    lines = [
+        f"# {title} — 第 {chapter_number} 章扩写",
+        "",
+        f"> 生成于 {now_iso()} · Draft Sandbox",
+        "",
+    ]
+    for para in paragraphs:
+        lines.append(para)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def expand_chapter_draft(
+    bible: dict[str, Any],
+    chapter_number: int,
+    sketch: str,
+    use_llm: bool = False,
+) -> dict[str, Any]:
+    heuristic = build_chapter_prose(bible, chapter_number)
+    payload = {
+        "text": heuristic,
+        "llm": {"used": False, "model": "heuristic", "provider": "none", "reason": "heuristic expansion"},
+    }
+    try:
+        from llm_adapter import expand_story_chapter
+
+        enhanced = expand_story_chapter(
+            bible=bible,
+            sketch=sketch,
+            heuristic=heuristic,
+            explicit=use_llm if use_llm else None,
+        )
+        payload["text"] = enhanced.get("text") or heuristic
+        payload["llm"] = enhanced.get("llm") or payload["llm"]
+    except Exception as exc:  # pragma: no cover - adapter guardrail
+        payload["llm"]["reason"] = f"adapter unavailable: {exc}"
+    return payload
 
 
 def build_outline_markdown(bible: dict[str, Any], session: dict[str, Any]) -> str:
@@ -844,7 +1045,14 @@ def build_transcript_markdown(paths: StoryPaths, session: dict[str, Any]) -> str
     return "\n".join(lines) + "\n"
 
 
-def build_story_drafts(paths: StoryPaths, bible: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+def build_story_drafts(
+    paths: StoryPaths,
+    bible: dict[str, Any],
+    session: dict[str, Any],
+    expand: bool = False,
+    use_llm: bool = False,
+    night: bool = False,
+) -> dict[str, Any]:
     bible = ensure_bible_schema(bible)
     paths.drafts.mkdir(parents=True, exist_ok=True)
 
@@ -852,24 +1060,75 @@ def build_story_drafts(paths: StoryPaths, bible: dict[str, Any], session: dict[s
     outline_path = paths.drafts / "outline.md"
     chapter_path = paths.drafts / f"chapter-{chapter_number:02d}-sketch.md"
     pillow_path = paths.drafts / "pillow_note.txt"
+    characters_path = paths.drafts / "characters.md"
+    sketch = build_chapter_sketch(bible, chapter_number)
+    pillow = (
+        build_night_pillow_note(bible, session)
+        if night
+        else first_sentence(bible.get("main_thread", ""), max_len=100)
+    )
 
     outline_path.write_text(build_outline_markdown(bible, session), encoding="utf-8")
-    chapter_path.write_text(build_chapter_sketch(bible, chapter_number), encoding="utf-8")
-    pillow_path.write_text(first_sentence(bible.get("main_thread", ""), max_len=100) + "\n", encoding="utf-8")
+    chapter_path.write_text(sketch, encoding="utf-8")
+    pillow_path.write_text(pillow + "\n", encoding="utf-8")
+    characters_path.write_text(build_character_sheet(bible), encoding="utf-8")
+
+    prose_path = ""
+    expansion: dict[str, Any] | None = None
+    if expand:
+        expansion = expand_chapter_draft(bible, chapter_number, sketch, use_llm=use_llm)
+        prose_file = paths.drafts / f"chapter-{chapter_number:02d}-prose.md"
+        prose_file.write_text(expansion["text"], encoding="utf-8")
+        prose_path = str(prose_file)
 
     bible["drafts"] = {
         "chapter_count": chapter_number,
         "last_draft_at": now_iso(),
         "last_export_at": bible.get("drafts", {}).get("last_export_at", ""),
+        "last_expand_at": now_iso() if expand else bible.get("drafts", {}).get("last_expand_at", ""),
+        "expanded": bool(expand),
     }
     write_json(paths.bible, bible)
 
-    return {
+    payload = {
         "chapter_number": chapter_number,
         "outline_path": str(outline_path),
         "chapter_sketch_path": str(chapter_path),
         "pillow_note_path": str(pillow_path),
+        "characters_path": str(characters_path),
+        "pillow_note": pillow,
+        "outline": outline_path.read_text(encoding="utf-8"),
+        "sketch": sketch,
+        "characters": characters_path.read_text(encoding="utf-8"),
     }
+    if prose_path and expansion:
+        payload["prose_path"] = prose_path
+        payload["prose"] = expansion["text"]
+        payload["llm"] = expansion["llm"]
+    return payload
+
+
+def load_latest_draft_texts(paths: StoryPaths, bible: dict[str, Any]) -> dict[str, str]:
+    bible = ensure_bible_schema(bible)
+    chapter = int(bible.get("drafts", {}).get("chapter_count", 0))
+    payload: dict[str, str] = {}
+    outline = paths.drafts / "outline.md"
+    pillow = paths.drafts / "pillow_note.txt"
+    characters = paths.drafts / "characters.md"
+    if outline.exists():
+        payload["outline"] = outline.read_text(encoding="utf-8")
+    if pillow.exists():
+        payload["pillow_note"] = pillow.read_text(encoding="utf-8")
+    if characters.exists():
+        payload["characters"] = characters.read_text(encoding="utf-8")
+    if chapter:
+        sketch = paths.drafts / f"chapter-{chapter:02d}-sketch.md"
+        prose = paths.drafts / f"chapter-{chapter:02d}-prose.md"
+        if sketch.exists():
+            payload["sketch"] = sketch.read_text(encoding="utf-8")
+        if prose.exists():
+            payload["prose"] = prose.read_text(encoding="utf-8")
+    return payload
 
 
 def export_story(paths: StoryPaths, bible: dict[str, Any], session: dict[str, Any]) -> dict[str, str]:
@@ -910,10 +1169,87 @@ def list_story_sessions(story_root: Path) -> list[dict[str, Any]]:
                 "turn_count": session.get("turn_count", 0),
                 "updated_at": session.get("updated_at", ""),
                 "main_thread": main_thread,
+                "_mtime": entry.stat().st_mtime,
             }
         )
-    items.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+    items.sort(
+        key=lambda item: (str(item.get("updated_at") or ""), float(item.get("_mtime") or 0.0), str(item.get("story_id") or "")),
+        reverse=True,
+    )
+    for item in items:
+        item.pop("_mtime", None)
     return items
+
+
+def tokenize_story_text(value: str) -> list[str]:
+    from bedagent_mvp import tokenize_text
+
+    return tokenize_text(value)
+
+
+def collect_story_search_entries(story_root: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for item in list_story_sessions(story_root):
+        paths = StoryPaths(story_root / item["story_id"])
+        bible = load_json(paths.bible, {})
+        fragments: list[str] = []
+        if paths.fragments.exists():
+            for line in paths.fragments.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                fragments.append(str(payload.get("fragment", "")))
+        characters = [c.get("name", "") for c in bible.get("characters", [])]
+        entries.append(
+            {
+                "story_id": item["story_id"],
+                "title": item.get("title", ""),
+                "main_thread": bible.get("main_thread", item.get("main_thread", "")),
+                "recent_recap": bible.get("recent_recap", ""),
+                "characters": " ".join(name for name in characters if name),
+                "fragments": " ".join(fragments[-8:]),
+                "turn_count": item.get("turn_count", 0),
+            }
+        )
+    return entries
+
+
+def search_stories(
+    story_root: Path,
+    query: str,
+    top_k: int = 3,
+    min_score: float = 0.0,
+) -> list[dict[str, Any]]:
+    from bedagent_mvp import apply_min_score, compute_idf, cosine_similarity, vectorize
+
+    entries = collect_story_search_entries(story_root)
+    if not entries:
+        return []
+    field_weights = {
+        "title": 0.15,
+        "main_thread": 0.35,
+        "recent_recap": 0.15,
+        "characters": 0.1,
+        "fragments": 0.25,
+    }
+    query_tokens = tokenize_story_text(query)
+    docs = {field: [tokenize_story_text(str(entry.get(field, ""))) for entry in entries] for field in field_weights}
+    all_tokens = [query_tokens]
+    for field in field_weights:
+        all_tokens.extend(docs[field])
+    idf = compute_idf(all_tokens)
+    qvec = vectorize(query_tokens, idf)
+    ranked = []
+    for idx, entry in enumerate(entries):
+        score = 0.0
+        detail = {}
+        for field, weight in field_weights.items():
+            part = cosine_similarity(qvec, vectorize(docs[field][idx], idf))
+            detail[field] = round(part, 6)
+            score += weight * part
+        ranked.append({"score": round(score, 6), "entry": entry, "detail": detail})
+    ranked.sort(key=lambda item: item["score"], reverse=True)
+    return apply_min_score(ranked[: max(1, top_k)], min_score)
 
 
 def build_story_recap(bible: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
@@ -988,6 +1324,8 @@ def run_story_tell(
     non_interactive: bool = False,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
+    use_llm: bool = False,
+    memory_journal_path: Path | None = None,
 ) -> dict[str, Any]:
     paths = resolve_story_paths(story_root, story_id, title)
     paths.root.mkdir(parents=True, exist_ok=True)
@@ -1001,7 +1339,7 @@ def run_story_tell(
     output_fn(f"标题: {session['title']} | 回合: {session.get('turn_count', 0)}")
     output_fn("像 vibe coding 一样讲：碎片、跳跃、重复都没关系。")
     output_fn("多行口述，空行发送。")
-    output_fn("命令: /answer /draft /export /recap /questions /help /quit")
+    output_fn("命令: /answer /draft /expand /characters /export /recap /questions /help /quit")
     output_fn("")
 
     last_result: dict[str, Any] | None = None
@@ -1017,6 +1355,8 @@ def run_story_tell(
             auto_confirm=auto_confirm,
             non_interactive=non_interactive,
             input_fn=input_fn,
+            use_llm=use_llm,
+            memory_journal_path=memory_journal_path,
         )
         session = result["session"]
         bible = result["bible"]
@@ -1029,7 +1369,7 @@ def run_story_tell(
     def handle_answer(raw: str) -> None:
         nonlocal session, bible, last_result
         try:
-            result = process_answer(paths, raw, session, bible)
+            result = process_answer(paths, raw, session, bible, memory_journal_path=memory_journal_path)
         except ValueError as exc:
             output_fn(f"（{exc}）")
             return
@@ -1045,7 +1385,7 @@ def run_story_tell(
 
     while True:
         fragment = read_multiline_fragment(
-            "继续口述或 /answer /draft /export /recap /questions /quit:",
+            "继续口述或 /answer /draft /expand /characters /export /recap /questions /quit:",
             input_fn=input_fn,
         )
         if fragment is None:
@@ -1069,7 +1409,7 @@ def run_story_tell(
             continue
         if fragment == "/help":
             output_fn("口述 → Sage 追问 → Focus 剪枝 → Blanket 大改确认 → bible 更新")
-            output_fn("/answer — 回复 Sage 追问  /draft — 生成章节草图  /export — 导出 markdown")
+            output_fn("/answer — 回复 Sage 追问  /draft — 章节草图  /expand — 扩写正文  /characters — 人物卡  /export — 导出 markdown")
             continue
         if fragment == "/draft":
             result = build_story_drafts(paths, bible, session)
@@ -1081,6 +1421,20 @@ def run_story_tell(
             output_fn(f"sketch: {result['chapter_sketch_path']}")
             output_fn(f"pillow: {result['pillow_note_path']}")
             output_fn("")
+            continue
+        if fragment == "/expand":
+            result = build_story_drafts(paths, bible, session, expand=True, use_llm=use_llm)
+            bible = ensure_bible_schema(load_json(paths.bible, bible))
+            output_fn("")
+            output_fn("=== bedagent story expand ===")
+            output_fn(f"chapter: {result['chapter_number']}")
+            output_fn(f"prose: {result.get('prose_path', '')}")
+            output_fn("")
+            continue
+        if fragment == "/characters":
+            sheet = build_character_sheet(bible)
+            output_fn("")
+            output_fn(sheet)
             continue
         if fragment == "/export":
             result = export_story(paths, bible, session)
@@ -1127,48 +1481,88 @@ def run_voice_story_once(
     voice_config_path: Path | None = None,
     auto_confirm: bool = False,
     non_interactive: bool = False,
+    use_llm: bool = False,
+    memory_journal_path: Path | None = None,
+    quiet: bool = False,
 ) -> dict[str, Any]:
     """Voice closed loop: ASR (or simulated sidecar) -> Story -> TTS reply."""
     from voice_adapter import (
+        apply_quiet_config,
         build_tts_summary,
         load_voice_config,
         persist_voice_turn_artifacts,
         synthesize_speech,
-        transcribe_file,
+        transcribe_stream,
         voice_turn_paths,
     )
 
     policy = policy or load_story_blanket_policy()
-    voice_config = voice_config or load_voice_config(voice_config_path)
+    voice_config = apply_quiet_config(voice_config or load_voice_config(voice_config_path), quiet=quiet)
 
-    transcript = transcribe_file(audio_path, config=voice_config, config_path=voice_config_path)
+    stream = transcribe_stream(audio_path, config=voice_config, config_path=voice_config_path, stream=True)
+    if stream.skipped and stream.skip_reason == "silence":
+        return {
+            "story_id": paths.root.name,
+            "transcript": "",
+            "asr_model": stream.model,
+            "applied": False,
+            "skipped": True,
+            "skip_reason": "silence",
+            "partials": stream.partials,
+            "agent_reply": "（静音，本轮未写入 bible）",
+            "session": session,
+            "bible": bible,
+            "quiet": bool(voice_config.get("quiet_mode")),
+            "silence_ratio": stream.silence_ratio,
+        }
+    if stream.command:
+        return {
+            "story_id": paths.root.name,
+            "transcript": stream.text,
+            "asr_model": stream.model,
+            "applied": False,
+            "skipped": True,
+            "skip_reason": stream.skip_reason,
+            "command": stream.command,
+            "partials": stream.partials,
+            "agent_reply": f"（语音口令 {stream.command}，未写入 bible）",
+            "session": session,
+            "bible": bible,
+            "quiet": bool(voice_config.get("quiet_mode")),
+        }
+
     result = process_fragment(
         paths,
-        transcript.text,
+        stream.text,
         session,
         bible,
         policy=policy,
         auto_confirm=auto_confirm,
         non_interactive=non_interactive,
+        use_llm=use_llm,
+        memory_journal_path=memory_journal_path,
     )
 
     turn_no = result["turn"]["turn"]
     artifacts = voice_turn_paths(paths.voice, turn_no)
     persist_voice_turn_artifacts(
         artifacts,
-        transcript=transcript.text,
+        transcript=stream.text,
         agent_reply=result["agent_reply"],
         input_audio=audio_path,
+        partials=stream.partials,
     )
     tts_text = build_tts_summary(result["agent_reply"], voice_config)
     speak = synthesize_speech(tts_text, artifacts["reply_audio"], config=voice_config)
 
     return {
         "story_id": paths.root.name,
-        "transcript": transcript.text,
-        "asr_model": transcript.model,
+        "transcript": stream.text,
+        "asr_model": stream.model,
         "result": result,
         "applied": result["applied"],
+        "skipped": False,
+        "partials": stream.partials,
         "agent_reply": result["agent_reply"],
         "tts_model": speak.model,
         "reply_audio": speak.output_path,
@@ -1176,6 +1570,8 @@ def run_voice_story_once(
         "artifacts": {key: str(value) for key, value in artifacts.items()},
         "session": result["session"],
         "bible": result["bible"],
+        "quiet": bool(voice_config.get("quiet_mode")),
+        "silence_ratio": stream.silence_ratio,
     }
 
 
@@ -1193,8 +1589,12 @@ def run_story_voice_tell(
     play_reply: bool = False,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
+    use_llm: bool = False,
+    memory_journal_path: Path | None = None,
+    quiet: bool = False,
 ) -> dict[str, Any]:
     from voice_adapter import (
+        apply_quiet_config,
         build_tts_summary,
         load_voice_config,
         map_voice_command,
@@ -1202,7 +1602,7 @@ def run_story_voice_tell(
         play_audio_file,
         record_microphone_wav,
         synthesize_speech,
-        transcribe_file,
+        transcribe_stream,
         voice_turn_paths,
     )
 
@@ -1210,7 +1610,7 @@ def run_story_voice_tell(
     paths.root.mkdir(parents=True, exist_ok=True)
     session, bible = load_story_state(paths, title)
     policy = policy or load_story_blanket_policy()
-    voice_config = voice_config or load_voice_config(voice_config_path)
+    voice_config = apply_quiet_config(voice_config or load_voice_config(voice_config_path), quiet=quiet)
 
     output_fn("")
     output_fn("=== bedagent story · 语音口述模式 ===")
@@ -1219,8 +1619,8 @@ def run_story_voice_tell(
     output_fn(f"标题: {session['title']} | 回合: {session.get('turn_count', 0)}")
     output_fn(f"ASR: {voice_config['asr_model']} | TTS: {voice_config['tts_model']} / {voice_config['tts_voice']}")
     output_fn("提供音频文件路径，输入 mic 录音，或口述文本路径 fallback。")
-    output_fn("语音口令：暂停 / 继续 / 取消 / 汇报一下")
-    output_fn("命令: /text /answer /draft /export /recap /questions /help /quit")
+    output_fn("语音口令：暂停 / 继续 / 取消 / 汇报一下 / 扩写 / 夜间模式")
+    output_fn("命令: /text /answer /draft /expand /characters /export /recap /quiet /questions /help /quit")
     output_fn("")
 
     last_result: dict[str, Any] | None = None
@@ -1255,8 +1655,15 @@ def run_story_voice_tell(
 
     def handle_voice_turn(audio_path: Path) -> dict[str, Any] | None:
         nonlocal session, bible, last_result
-        transcript = transcribe_file(audio_path, config=voice_config, config_path=voice_config_path)
-        mapped = map_voice_command(transcript.text, voice_config)
+        transcript = transcribe_stream(audio_path, config=voice_config, config_path=voice_config_path)
+        if transcript.partials:
+            for item in transcript.partials:
+                marker = "终" if item.get("is_final") else "部"
+                output_fn(f"  [{marker}] {item['text']}")
+        if transcript.skipped and transcript.skip_reason == "silence":
+            output_fn("（静音，跳过本轮）")
+            return {"skipped": True, "skip_reason": "silence"}
+        mapped = transcript.command or map_voice_command(transcript.text, voice_config)
         if mapped:
             return {"command": mapped, "transcript": transcript.text}
 
@@ -1271,6 +1678,8 @@ def run_story_voice_tell(
             auto_confirm=auto_confirm,
             non_interactive=non_interactive,
             input_fn=input_fn,
+            use_llm=use_llm,
+            memory_journal_path=memory_journal_path,
         )
         session = result["session"]
         bible = result["bible"]
@@ -1283,6 +1692,7 @@ def run_story_voice_tell(
             transcript=transcript.text,
             agent_reply=result["agent_reply"],
             input_audio=audio_path,
+            partials=transcript.partials,
         )
         tts_text = build_tts_summary(result["agent_reply"], voice_config)
         speak = synthesize_speech(tts_text, artifacts["reply_audio"], config=voice_config)
@@ -1290,10 +1700,12 @@ def run_story_voice_tell(
         output_fn(result["agent_reply"])
         output_fn("")
         output_fn(f"TTS: {speak.output_path} ({speak.byte_size} bytes)")
-        if play_reply:
+        if play_reply and not voice_config.get("quiet_mode"):
             played = play_audio_file(Path(speak.output_path))
             if not played:
                 output_fn("（未安装播放依赖，跳过自动播放）")
+        elif voice_config.get("quiet_mode"):
+            output_fn("（夜间模式：不自动播放）")
         output_fn("")
         return result
 
@@ -1308,6 +1720,8 @@ def run_story_voice_tell(
             auto_confirm=auto_confirm,
             non_interactive=non_interactive,
             input_fn=input_fn,
+            use_llm=use_llm,
+            memory_journal_path=memory_journal_path,
         )
         session = result["session"]
         bible = result["bible"]
@@ -1350,8 +1764,16 @@ def run_story_voice_tell(
             command = outcome["command"]
             if command == "/quit":
                 break
-            if command == "/recap":
+            if command in {"/recap", "/resume"}:
                 print_story_recap(build_story_recap(bible, session))
+                if play_reply and not voice_config.get("quiet_mode"):
+                    note = build_night_pillow_note(bible, session)
+                    recap_audio = paths.voice / "recap.wav"
+                    speak = synthesize_speech(note, recap_audio, config=voice_config)
+                    output_fn(f"TTS recap: {speak.output_path}")
+                    played = play_audio_file(Path(speak.output_path))
+                    if not played:
+                        output_fn("（未安装播放依赖，跳过自动播放）")
                 continue
             if command == "/questions":
                 open_q = bible.get("open_questions", [])
@@ -1366,12 +1788,27 @@ def run_story_voice_tell(
                 continue
             if command == "/help":
                 output_fn("语音口述：DashScope ASR 转写 → Sage/Focus → CosyVoice TTS 短反馈")
-                output_fn("/text 切到文本口述  /answer /draft /export /recap /quit")
+                output_fn("/text 切到文本口述  /answer /draft /expand /characters /export /recap /quiet /quit")
                 continue
             if command == "/draft":
-                result = build_story_drafts(paths, bible, session)
+                result = build_story_drafts(paths, bible, session, night=bool(voice_config.get("quiet_mode")))
                 bible = ensure_bible_schema(load_json(paths.bible, bible))
                 output_fn(f"draft: {result['chapter_sketch_path']}")
+                continue
+            if command == "/expand":
+                result = build_story_drafts(
+                    paths, bible, session, expand=True, use_llm=use_llm, night=bool(voice_config.get("quiet_mode"))
+                )
+                bible = ensure_bible_schema(load_json(paths.bible, bible))
+                output_fn(f"expand: {result.get('prose_path', result['chapter_sketch_path'])}")
+                continue
+            if command == "/characters":
+                output_fn(build_character_sheet(bible))
+                continue
+            if command == "/quiet":
+                voice_config["quiet_mode"] = not bool(voice_config.get("quiet_mode"))
+                voice_config = apply_quiet_config(voice_config, quiet=bool(voice_config["quiet_mode"]))
+                output_fn("夜间模式：" + ("开" if voice_config.get("quiet_mode") else "关"))
                 continue
             if command == "/export":
                 result = export_story(paths, bible, session)
@@ -1387,7 +1824,9 @@ def run_story_voice_tell(
                 answer = read_multiline_fragment("对齐回答（空行发送）:", input_fn=input_fn)
                 if answer and not answer.startswith("/"):
                     try:
-                        ans = process_answer(paths, answer, session, bible)
+                        ans = process_answer(
+                            paths, answer, session, bible, memory_journal_path=memory_journal_path
+                        )
                         session = ans["session"]
                         bible = ans["bible"]
                         output_fn(ans["agent_reply"])
