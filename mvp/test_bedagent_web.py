@@ -22,6 +22,7 @@ class BedagentWebTests(unittest.TestCase):
                 payload = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["service"], "bedagent_web")
+            self.assertEqual(payload["product_milestone"], "v0.12.0-mvp")
         finally:
             server.shutdown()
 
@@ -106,6 +107,33 @@ class BedagentWebTests(unittest.TestCase):
             self.assertTrue(payload["applied"])
             self.assertIn("agent_reply", payload)
             self.assertIn("维修", payload["bible"]["main_thread"])
+            self.assertIn("story_id", payload)
+        finally:
+            server.shutdown()
+
+    def test_story_list_and_search_after_persist(self) -> None:
+        server = self.start_server()
+        port = server.server_address[1]
+        body = json.dumps({"fragment": "主角是一个维修AI，它在冬眠舰上偷听人类的梦。", "title": "web-search-test"}).encode(
+            "utf-8"
+        )
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/story/fragment",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                created = json.loads(resp.read().decode("utf-8"))
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/story/list", timeout=5) as resp:
+                listing = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(any(item["story_id"] == created["story_id"] for item in listing["items"]))
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/api/story/search?q=%E7%BB%B4%E4%BF%AEAI", timeout=5
+            ) as resp:
+                search = json.loads(resp.read().decode("utf-8"))
+            self.assertIn("hits", search)
         finally:
             server.shutdown()
 

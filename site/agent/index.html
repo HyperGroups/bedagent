@@ -55,7 +55,7 @@
           <button class="mode-card" type="button" data-mode="voice" role="tab" aria-selected="false">
             <span class="mode-icon">🎙️</span>
             <h3>语音口述</h3>
-            <p>DashScope ASR/TTS · 需本地 bedagent_web 服务</p>
+            <p>DashScope / 本地 Whisper · 静音自动停 · VAD 分轮</p>
             <span class="mode-tag">百炼 · 可选</span>
           </button>
         </div>
@@ -70,7 +70,11 @@
                 <h2 id="session-title">未命名故事</h2>
               </div>
               <div class="panel-actions">
+                <button class="button secondary small" type="button" id="btn-resume">恢复最近</button>
                 <button class="button secondary small" type="button" id="btn-new-session">新故事</button>
+                <button class="button secondary small" type="button" id="btn-draft">生成草稿</button>
+                <button class="button secondary small" type="button" id="btn-expand">扩写</button>
+                <button class="button secondary small" type="button" id="btn-speak">朗读</button>
                 <button class="button secondary small" type="button" id="btn-export-md">导出 MD</button>
                 <button class="button secondary small" type="button" id="btn-export-json">导出 JSON</button>
               </div>
@@ -88,6 +92,10 @@
               <div class="input-actions">
                 <button class="button primary" type="button" id="btn-send-fragment">发送口述</button>
                 <button class="button secondary" type="button" id="btn-send-answer">对齐回答</button>
+                <label class="quiet-toggle">
+                  <input type="checkbox" id="chk-quiet" />
+                  夜间朗读
+                </label>
               </div>
             </div>
 
@@ -105,14 +113,27 @@
             </div>
 
             <div id="voice-controls" class="input-area hidden">
-              <p class="hint">录音后通过本地 API 调用 DashScope ASR，再进入 Story 流程。</p>
+              <p class="hint">按住说话；勾选静音自动停后，说完停顿即结束。松手进入 Story 闭环。</p>
               <div class="voice-row">
-                <button class="button primary" type="button" id="btn-record">🎙 录音</button>
+                <button class="button primary" type="button" id="btn-record">🎙 按住说话</button>
                 <span id="record-status" class="record-status">就绪</span>
               </div>
+              <label class="quiet-toggle">
+                <input type="checkbox" id="chk-voice-loop" checked />
+                说完即闭环（ASR → Sage → TTS）
+              </label>
+              <label class="quiet-toggle">
+                <input type="checkbox" id="chk-auto-stop" checked />
+                静音自动停
+              </label>
+              <label class="quiet-toggle">
+                <input type="checkbox" id="chk-vad" checked />
+                自动分轮（VAD）
+              </label>
               <audio id="playback" controls class="hidden"></audio>
+              <div id="voice-partials" class="voice-partials" aria-live="polite"></div>
               <div class="input-actions">
-                <button class="button secondary" type="button" id="btn-voice-transcribe">转写并发送</button>
+                <button class="button secondary" type="button" id="btn-voice-transcribe">仅转写并发送</button>
               </div>
             </div>
           </div>
@@ -121,6 +142,20 @@
             <div class="panel-head">
               <p class="eyebrow">Story Bible</p>
               <h2>当前状态</h2>
+            </div>
+            <div class="bible-block">
+              <h3>会话</h3>
+              <select id="session-picker" aria-label="选择故事会话">
+                <option value="">本机草稿</option>
+              </select>
+            </div>
+            <div class="bible-block">
+              <h3>检索伏笔</h3>
+              <div class="search-row">
+                <input id="story-search" type="search" placeholder="搜索主线 / 人物 / 口述…" />
+                <button class="button secondary small" type="button" id="btn-story-search">搜</button>
+              </div>
+              <ul id="search-hits" class="bible-list"></ul>
             </div>
             <dl class="bible-stats">
               <div><dt>回合</dt><dd id="stat-turns">0</dd></div>

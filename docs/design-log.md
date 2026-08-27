@@ -520,3 +520,124 @@ product_milestone: v0.8.0-mvp
 - explain 校验仅针对 `policy_explain`；
 - worktree 过滤仅作用于 `list/retention-report`；
 - 检索仍为本地 TF-IDF，不引入外部检索服务。
+
+## ADR-0017：v0.9 可选 LLM Sage、故事检索、explain-diff 与 Web 持久化
+
+```yaml
+date: 2026-08-27
+design_version: D0.1
+status: accepted
+product_milestone: v0.9.0-mvp
+```
+
+### 决策
+
+在 v0.8 工程闭环与 story/voice/web 适配器之上推进：
+
+1. 可选 DashScope Qwen 增强 Sage 追问（`--use-llm` / `BEDAGENT_LLM=1`，默认启发式）；
+2. `story search` 跨会话检索主线/人物/口述（CJK-aware TF-IDF）；
+3. run manifest 增加顶层 `schema_version`；
+4. `explain-diff` 对比两次 run 的 policy_explain；
+5. Web API 将故事会话写入 `.bedagent/stories/`，并提供 list/search。
+
+### 原因
+
+“全面推进”需要把 bed 上的口述场景接到可检索、可对比、可持久的控制层，同时保持零依赖默认路径。
+
+### 边界
+
+- LLM 失败必须回退启发式，不得阻断闭环；
+- 故事检索仍是本地 lexical，不引入向量库；
+- GitHub Pages 静态站仍可离线用 localStorage；持久化需要本地 `bedagent_web.py`。
+
+## ADR-0018：v0.10 章节扩写、会话恢复、记忆合流与夜间语音
+
+```yaml
+date: 2026-08-27
+design_version: D0.1
+status: accepted
+product_milestone: v0.10.0-mvp
+```
+
+### 决策
+
+在 v0.9 可选 LLM Sage 与故事检索之上，把床边写故事补成可恢复、可扩写、可合流的控制层：
+
+1. `story draft --expand` 在 Draft Sandbox 写章节正文（启发式默认，Qwen 可选）；
+2. `story resume` / `--resume` 打开最近会话，不强迫用户记住 story-id；
+3. 口述回合写入 memory journal（`kind=story`），`search` 同时检索记忆与故事；
+4. `--quiet` / 夜间模式缩短 TTS，默认不自动播放；
+5. 人物卡补 role / desire / conflict；Web 增加草稿、扩写、朗读、恢复最近。
+
+### 原因
+
+「全面增加功能」要落在躺着能用的闭环上：少记 id、少听长语音、草稿可展开但仍在沙盒，记忆可跨故事找回伏笔。
+
+### 边界
+
+- 扩写只写 `drafts/`，不直接改 bible 主线；
+- LLM 失败回退启发式；
+- 统一检索仍是本地 TF-IDF，不引入向量库；
+- 连续流式 ASR 仍未做，麦克风仍是 push-to-talk 窗口。
+
+## ADR-0019：v0.11 流式语音闭环、静音门与按住说话
+
+```yaml
+date: 2026-08-27
+design_version: D0.1
+status: accepted
+product_milestone: v0.11.0-mvp
+```
+
+### 决策
+
+把 Voice 从「转写一次再手动发送」推进成床边闭环：
+
+1. `transcribe_stream()` 输出 growing partials（模拟 sidecar 切分，或 DashScope Recognition `start/send_audio_frame/stop`）；
+2. 静音门：无 sidecar 且 PCM 近似静音时不写 bible；
+3. 语音口令（含对齐/恢复）短路，不误写入故事；
+4. `POST /api/voice/story` 一次完成 ASR → Sage → TTS；
+5. Web 按住说话、松手闭环、新录音打断正在播放的 TTS；
+6. `voice status` / `voice recap` 让床边先听短汇报。
+
+### 原因
+
+「全面推进包括语音功能」要求少抬手：说完就对齐，听完就知道主线，空录音不要污染 bible。
+
+### 边界
+
+- 浏览器仍是 push-to-talk，不是持续开麦 VAD 分轮；
+- 无 API Key 时用 sidecar / `BEDAGENT_TTS_SIMULATE` 跑通测试；
+- DashScope 实时流失败回退到文件 ASR + 合成 partials；
+- GitHub Pages 仍需本地 `bedagent_web.py` 才能真转写。
+
+## ADR-0020：v0.12 VAD 分轮、本地语音回退与句子 TTS
+
+```yaml
+date: 2026-08-27
+design_version: D0.1
+status: accepted
+product_milestone: v0.12.0-mvp
+```
+
+### 决策
+
+把床边语音从「按住说一整段」推进成可分段、可离线回退的控制层：
+
+1. 能量 VAD 把长录音切成多轮口述（`transcribe_vad` / `--vad`），每轮单独走 Sage → bible；
+2. `provider: auto`：无百炼 Key 时走 sidecar / 本地 Whisper，TTS 可走 Piper；
+3. 句子级 TTS（`--tts-stream`）按标点切 wav，便于短反馈和打断；
+4. 语音回合写入 memory journal（`kind=voice`）；
+5. Web 增加静音自动停与自动分轮勾选，减少松手操作。
+
+### 原因
+
+「全面推进包括语音功能」要让躺着说话更接近持续对话：一段里的停顿变成自然分轮，云端不可用时仍能用本地/模拟跑通闭环。
+
+### 边界
+
+- 浏览器仍不是持续开麦；自动停只作用于当前这一次按住说话；
+- VAD 是 PCM 能量门，不是神经网络 VAD；
+- Whisper / Piper 为可选二进制，测试默认 sidecar + `BEDAGENT_TTS_SIMULATE`；
+- GitHub Pages 仍需本地 `bedagent_web.py`。
+

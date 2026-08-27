@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "provider": "dashscope",
+  "provider": "auto",
   "region": "cn-beijing",
   "workspace_id": "",
   "asr_model": "fun-asr-realtime",
@@ -8,7 +8,19 @@
   "tts_voice": "longxiaochun",
   "sample_rate": 16000,
   "mic_seconds": 8,
+  "stream_partial_chars": 8,
+  "silence_skip_ratio": 0.97,
+  "stream_frame_bytes": 3200,
+  "vad_frame_ms": 30,
+  "vad_energy_threshold": 500,
+  "vad_min_speech_ms": 180,
+  "vad_max_silence_ms": 400,
+  "vad_padding_ms": 80,
+  "local_asr_command": "",
+  "local_tts_command": "",
   "max_tts_chars": 220,
+  "quiet_mode": false,
+  "quiet_max_tts_chars": 72,
   "secret_block_keywords": [
     "api_key",
     "api key",
@@ -23,6 +35,13 @@
     "continue": ["继续", "接着说"],
     "cancel": ["取消", "算了"],
     "recap": ["汇报一下", "回顾一下", "recap"],
-    "quit": ["退出", "结束", "quit"]
+    "quit": ["退出", "结束", "quit"],
+    "draft": ["生成草稿", "写一章", "draft"],
+    "export": ["导出", "export"],
+    "expand": ["扩写", "展开这一章", "expand"],
+    "quiet": ["小声点", "夜间模式", "别出声"],
+    "characters": ["人物卡", "有谁"],
+    "answer": ["对齐", "回答问题", "我来回答"],
+    "resume": ["恢复最近", "接着上次", "resume"]
   }
 }

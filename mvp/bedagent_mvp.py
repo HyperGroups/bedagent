@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 POLICY_EXPLAIN_SCHEMA_VERSION = "1.0.0"
+MANIFEST_SCHEMA_VERSION = "1.0.0"
 
 
 DEFAULT_RED_KEYWORDS = {
@@ -695,7 +696,14 @@ def summarize_recent_entries(entries: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def tokenize_text(value: str) -> list[str]:
-    return re.findall(r"[a-z]{3,}", value.lower())
+    tokens = re.findall(r"[a-z]{3,}", value.lower())
+    for run in re.findall(r"[\u4e00-\u9fff]+", value):
+        if len(run) == 1:
+            continue
+        tokens.append(run)
+        if len(run) > 2:
+            tokens.extend(run[i : i + 2] for i in range(len(run) - 1))
+    return tokens
 
 
 def compute_idf(doc_tokens: list[list[str]]) -> dict[str, float]:
@@ -764,6 +772,68 @@ def semantic_memory_search(entries: list[dict[str, Any]], query: str, top_k: int
 def apply_min_score(hits: list[dict[str, Any]], min_score: float) -> list[dict[str, Any]]:
     threshold = max(0.0, float(min_score))
     return [hit for hit in hits if float(hit.get("score", 0.0)) >= threshold]
+
+
+def unified_search(
+    query: str,
+    journal_path: Path,
+    story_root: Path,
+    top_k: int = 5,
+    min_score: float = 0.0,
+    memory_limit: int = 80,
+) -> list[dict[str, Any]]:
+    entries = read_memory_entries(journal_path, limit=max(1, memory_limit))
+    memory_hits = semantic_memory_search(entries=entries, query=query, top_k=max(1, top_k))
+    story_hits: list[dict[str, Any]] = []
+    try:
+        from story_session import search_stories
+
+        story_hits = search_stories(story_root, query, top_k=max(1, top_k), min_score=0.0)
+    except Exception:
+        story_hits = []
+    combined: list[dict[str, Any]] = []
+    for hit in memory_hits:
+        combined.append({"source": "memory", "score": hit["score"], "entry": hit["entry"], "detail": hit.get("detail", {})})
+    for hit in story_hits:
+        combined.append({"source": "story", "score": hit["score"], "entry": hit["entry"], "detail": hit.get("detail", {})})
+    combined.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+    return apply_min_score(combined, min_score)[: max(1, top_k)]
+
+
+def diff_policy_explain(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    left_explain = left.get("policy_explain") if "policy_explain" in left else left
+    right_explain = right.get("policy_explain") if "policy_explain" in right else right
+    if not isinstance(left_explain, dict):
+        left_explain = {}
+    if not isinstance(right_explain, dict):
+        right_explain = {}
+    changes: list[dict[str, Any]] = []
+    for field in ("schema_version", "final_status"):
+        if left_explain.get(field) != right_explain.get(field):
+            changes.append(
+                {"field": field, "left": left_explain.get(field), "right": right_explain.get(field)}
+            )
+    left_gates = [item.get("gate") for item in left_explain.get("gates", []) if isinstance(item, dict)]
+    right_gates = [item.get("gate") for item in right_explain.get("gates", []) if isinstance(item, dict)]
+    if left_gates != right_gates:
+        changes.append({"field": "gates", "left": left_gates, "right": right_gates})
+    left_confirm = next((g for g in left_explain.get("gates", []) if g.get("gate") == "confirm"), {})
+    right_confirm = next((g for g in right_explain.get("gates", []) if g.get("gate") == "confirm"), {})
+    if left_confirm.get("approved") != right_confirm.get("approved"):
+        changes.append(
+            {
+                "field": "confirm.approved",
+                "left": left_confirm.get("approved"),
+                "right": right_confirm.get("approved"),
+            }
+        )
+    return {
+        "changed": bool(changes),
+        "change_count": len(changes),
+        "left_status": left_explain.get("final_status"),
+        "right_status": right_explain.get("final_status"),
+        "changes": changes,
+    }
 
 
 def build_recap(journal_path: Path, limit: int) -> dict[str, Any]:
@@ -1000,6 +1070,7 @@ def run_closed_loop(
     policy_explain = build_policy_explain_chain(blanket=blanket, confirm=confirm, act=act)
 
     manifest = {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
         "run_id": run_id,
         "generated_at": now_iso(),
         "flow": (
@@ -1144,6 +1215,33 @@ def parse_args() -> argparse.Namespace:
         "--since",
         help="only include entries recorded at/after this ISO timestamp",
     )
+    memory_search.add_argument(
+        "--include-stories",
+        action="store_true",
+        help="also search story bibles/fragments and merge results",
+    )
+    memory_search.add_argument(
+        "--story-root",
+        default=".bedagent/stories",
+        help="story session root used with --include-stories",
+    )
+
+    search = sub.add_parser("search", help="unified search across memory journal and story sessions")
+    search.add_argument("--query", required=True, help="search query")
+    search.add_argument(
+        "--memory-journal",
+        default=".bedagent/memory/journal.ndjson",
+        help="append-only memory journal path",
+    )
+    search.add_argument(
+        "--story-root",
+        default=".bedagent/stories",
+        help="story session root",
+    )
+    search.add_argument("--top-k", default=5, type=int, help="number of results to return")
+    search.add_argument("--min-score", default=0.0, type=float, help="minimum score threshold")
+    search.add_argument("--limit", default=80, type=int, help="memory journal scan window")
+    search.add_argument("--output-json", help="optional path to write search JSON")
 
     worktree = sub.add_parser("worktree", help="manage bedagent-managed worktrees")
     worktree.add_argument(
@@ -1215,11 +1313,29 @@ def parse_args() -> argparse.Namespace:
         help="expected policy_explain schema version",
     )
 
+    explain_diff = sub.add_parser("explain-diff", help="diff policy_explain between two manifests")
+    explain_diff.add_argument("--left", required=True, help="path to left manifest.json")
+    explain_diff.add_argument("--right", required=True, help="path to right manifest.json")
+    explain_diff.add_argument("--output-json", help="optional path to write diff JSON")
+
     story = sub.add_parser("story", help="oral storytelling loop (口述写故事)")
     story.add_argument(
         "action",
-        choices=["tell", "once", "recap", "answer", "draft", "export", "list", "voice", "voice-once"],
-        help="tell/voice=interactive, once/voice-once=single turn, recap/draft/export/list/answer",
+        choices=[
+            "tell",
+            "once",
+            "recap",
+            "answer",
+            "draft",
+            "export",
+            "list",
+            "voice",
+            "voice-once",
+            "search",
+            "resume",
+            "characters",
+        ],
+        help="tell/voice=interactive; resume=latest session; characters=character sheet",
     )
     story.add_argument("--title", help="story title for a new session")
     story.add_argument(
@@ -1290,12 +1406,60 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="auto-play TTS reply audio when sounddevice is available",
     )
+    story.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="optionally enhance Sage questions with DashScope Qwen (or BEDAGENT_LLM_SIMULATE)",
+    )
+    story.add_argument("--query", help="search query for story search")
+    story.add_argument("--top-k", default=3, type=int, help="story search result count")
+    story.add_argument("--min-score", default=0.0, type=float, help="story search minimum score")
+    story.add_argument(
+        "--resume",
+        action="store_true",
+        help="reuse the latest story session when --story-id is omitted",
+    )
+    story.add_argument(
+        "--expand",
+        action="store_true",
+        help="expand chapter sketch into prose (story draft)",
+    )
+    story.add_argument(
+        "--night",
+        action="store_true",
+        help="short night pillow note (story recap/draft)",
+    )
+    story.add_argument(
+        "--quiet",
+        action="store_true",
+        help="night/quiet TTS mode (shorter speech, no auto-play)",
+    )
+    story.add_argument(
+        "--stream",
+        action="store_true",
+        help="print ASR partials during story voice-once",
+    )
+    story.add_argument(
+        "--vad",
+        action="store_true",
+        help="split story voice-once audio into VAD utterances",
+    )
+    story.add_argument(
+        "--tts-stream",
+        action="store_true",
+        help="synthesize TTS sentence-by-sentence for story voice-once",
+    )
+    story.add_argument(
+        "--memory-journal",
+        default=".bedagent/memory/journal.ndjson",
+        help="append story turns into the memory journal",
+    )
 
     voice = sub.add_parser("voice", help="DashScope ASR/TTS voice adapter (百炼语音)")
     voice.add_argument(
         "action",
-        choices=["transcribe", "speak"],
-        help="transcribe audio to text or synthesize text to speech",
+        choices=["transcribe", "speak", "status", "recap"],
+        help="transcribe, speak, show voice status, or speak a story night recap",
     )
     voice.add_argument("--audio-file", help="input audio path (transcribe)")
     voice.add_argument("--text", help="text to synthesize (speak)")
@@ -1312,6 +1476,30 @@ def parse_args() -> argparse.Namespace:
     voice.add_argument(
         "--output-json",
         help="optional path to write voice result JSON",
+    )
+    voice.add_argument(
+        "--quiet",
+        action="store_true",
+        help="night/quiet TTS mode (shorter speech)",
+    )
+    voice.add_argument(
+        "--stream",
+        action="store_true",
+        help="emit growing ASR partials while transcribing, or sentence TTS while speaking",
+    )
+    voice.add_argument(
+        "--vad",
+        action="store_true",
+        help="split transcribe audio into VAD utterances",
+    )
+    voice.add_argument(
+        "--story-root",
+        default=".bedagent/stories",
+        help="story session root for voice recap",
+    )
+    voice.add_argument(
+        "--story-id",
+        help="story session id for voice recap (default: latest)",
     )
 
     return parser.parse_args()
@@ -1357,6 +1545,15 @@ def main() -> int:
         )
         hits = semantic_memory_search(entries=entries, query=args.query, top_k=max(1, args.top_k))
         hits = apply_min_score(hits=hits, min_score=args.min_score)
+        if args.include_stories:
+            hits = unified_search(
+                query=args.query,
+                journal_path=Path(args.memory_journal),
+                story_root=Path(args.story_root),
+                top_k=max(1, args.top_k),
+                min_score=args.min_score,
+                memory_limit=max(1, args.limit),
+            )
         print("")
         print("=== bedagent memory semantic search ===")
         print(f"journal: {args.memory_journal}")
@@ -1380,6 +1577,37 @@ def main() -> int:
             detail = hit.get("detail", {})
             if args.explain and detail:
                 print(f"   detail: {json.dumps(detail, ensure_ascii=False)}")
+            if hit.get("source"):
+                print(f"   source: {hit['source']}")
+        return 0
+
+    if args.command == "search":
+        hits = unified_search(
+            query=args.query,
+            journal_path=Path(args.memory_journal),
+            story_root=Path(args.story_root),
+            top_k=max(1, args.top_k),
+            min_score=args.min_score,
+            memory_limit=max(1, args.limit),
+        )
+        print("")
+        print("=== bedagent unified search ===")
+        print(f"query: {args.query}")
+        print(f"returned: {len(hits)}")
+        for idx, hit in enumerate(hits, start=1):
+            entry = hit["entry"]
+            label = entry.get("run_id") or entry.get("story_id") or "-"
+            title = entry.get("title") or entry.get("pillow_note") or entry.get("main_thread") or ""
+            print(f"{idx}. source={hit['source']} score={hit['score']:.4f} id={label}")
+            print(f"   {title}")
+        if args.output_json:
+            output_path = Path(args.output_json)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps({"query": args.query, "hits": hits}, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            print(f"search_json: {output_path}")
         return 0
 
     if args.command == "worktree":
@@ -1490,6 +1718,26 @@ def main() -> int:
             print(f"- error: {err}")
         return 0 if ok else 1
 
+    if args.command == "explain-diff":
+        left = json.loads(Path(args.left).read_text(encoding="utf-8"))
+        right = json.loads(Path(args.right).read_text(encoding="utf-8"))
+        diff = diff_policy_explain(left, right)
+        print("")
+        print("=== bedagent policy explain diff ===")
+        print(f"left: {args.left}")
+        print(f"right: {args.right}")
+        print(f"changed: {diff['changed']} count={diff['change_count']}")
+        print(f"left_status: {diff['left_status']}")
+        print(f"right_status: {diff['right_status']}")
+        for item in diff["changes"]:
+            print(f"- {item['field']}: {item['left']} -> {item['right']}")
+        if args.output_json:
+            output_path = Path(args.output_json)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(diff, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            print(f"diff_json: {output_path}")
+        return 0
+
     if args.command == "voice":
         import sys
 
@@ -1497,19 +1745,131 @@ def main() -> int:
         if str(mvp_dir) not in sys.path:
             sys.path.insert(0, str(mvp_dir))
         from voice_adapter import (
+            apply_quiet_config,
             build_tts_summary,
             load_voice_config,
             synthesize_speech,
+            synthesize_speech_stream,
             transcribe_file,
+            transcribe_stream,
+            transcribe_vad,
+            voice_status,
         )
 
-        voice_config = load_voice_config(Path(args.voice_config))
+        voice_config = apply_quiet_config(load_voice_config(Path(args.voice_config)), quiet=args.quiet)
+
+        if args.action == "status":
+            status = voice_status(voice_config)
+            print("")
+            print("=== bedagent voice status ===")
+            for key, value in status.items():
+                print(f"{key}: {value}")
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(json.dumps(status, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                print(f"status_json: {output_path}")
+            return 0
+
+        if args.action == "recap":
+            from story_session import (
+                build_night_pillow_note,
+                latest_story_session,
+                load_story_state,
+                resolve_resume_story_id,
+                resolve_story_paths,
+            )
+
+            story_root = Path(args.story_root)
+            story_id = resolve_resume_story_id(story_root, args.story_id, resume=not args.story_id)
+            if not story_id:
+                latest = latest_story_session(story_root)
+                story_id = latest["story_id"] if latest else None
+            if not story_id:
+                print("Input error: no story sessions for voice recap.")
+                return 2
+            paths = resolve_story_paths(story_root, story_id, None)
+            if not paths.root.exists():
+                print(f"Input error: story session not found at {paths.root}")
+                return 2
+            session, bible = load_story_state(paths, None)
+            note = build_night_pillow_note(bible, session)
+            output = Path(args.output or ".bedagent/voice/recap.wav")
+            try:
+                result = synthesize_speech(note, output, config=voice_config)
+            except Exception as exc:
+                print(f"Voice error: {exc}")
+                return 1
+            print("")
+            print("=== bedagent voice recap ===")
+            print(f"story_id: {story_id}")
+            print(f"text: {result.text}")
+            print(f"output: {result.output_path}")
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps({"story_id": story_id, "text": result.text, "output": result.output_path}, indent=2, ensure_ascii=False)
+                    + "\n",
+                    encoding="utf-8",
+                )
+                print(f"recap_json: {output_path}")
+            return 0
 
         if args.action == "transcribe":
             if not args.audio_file:
                 print("Input error: --audio-file is required for voice transcribe.")
                 return 2
             try:
+                if args.vad:
+                    vad = transcribe_vad(Path(args.audio_file), config=voice_config)
+                    print("")
+                    print("=== bedagent voice transcribe vad ===")
+                    print(f"model: {vad.model}")
+                    print(f"segments: {len(vad.segments)}")
+                    print(f"skipped: {vad.skipped} {vad.skip_reason}".strip())
+                    for segment in vad.segments:
+                        print(f"  [seg {segment.index}] {segment.start_ms}-{segment.end_ms}ms energy={segment.energy}")
+                    for item in vad.utterances:
+                        marker = "skip" if item.skipped else "utt"
+                        print(f"  [{marker}] {item.text}")
+                    print(f"text: {vad.text}")
+                    if args.output_json:
+                        output_path = Path(args.output_json)
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        payload = {
+                            "text": vad.text,
+                            "model": vad.model,
+                            "skipped": vad.skipped,
+                            "skip_reason": vad.skip_reason,
+                            "segments": [segment.__dict__ for segment in vad.segments],
+                            "utterances": [item.__dict__ for item in vad.utterances],
+                        }
+                        output_path.write_text(
+                            json.dumps(payload, indent=2, ensure_ascii=False, default=str) + "\n",
+                            encoding="utf-8",
+                        )
+                        print(f"transcribe_json: {output_path}")
+                    return 0
+                if args.stream:
+                    stream = transcribe_stream(Path(args.audio_file), config=voice_config)
+                    print("")
+                    print("=== bedagent voice transcribe stream ===")
+                    print(f"model: {stream.model}")
+                    print(f"skipped: {stream.skipped} {stream.skip_reason}".strip())
+                    for item in stream.partials:
+                        marker = "final" if item.get("is_final") else "partial"
+                        print(f"  [{marker}] {item['text']}")
+                    print(f"text: {stream.text}")
+                    if args.output_json:
+                        output_path = Path(args.output_json)
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        output_path.write_text(
+                            json.dumps(stream.__dict__, indent=2, ensure_ascii=False, default=str) + "\n",
+                            encoding="utf-8",
+                        )
+                        print(f"transcribe_json: {output_path}")
+                    return 0
                 result = transcribe_file(Path(args.audio_file), config=voice_config)
             except Exception as exc:
                 print(f"Voice error: {exc}")
@@ -1539,6 +1899,33 @@ def main() -> int:
             output = Path(args.output or ".bedagent/voice/reply.wav")
             try:
                 summary = build_tts_summary(text or "", voice_config)
+                if args.stream:
+                    spoken = synthesize_speech_stream(summary, output.parent / "sentences", config=voice_config)
+                    print("")
+                    print("=== bedagent voice speak stream ===")
+                    print(f"model: {spoken.model}")
+                    print(f"sentences: {len(spoken.sentences)}")
+                    for item in spoken.sentences:
+                        print(f"  {item.text} -> {item.output_path}")
+                    if args.output_json:
+                        output_path = Path(args.output_json)
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        output_path.write_text(
+                            json.dumps(
+                                {
+                                    "text": spoken.text,
+                                    "model": spoken.model,
+                                    "output_paths": spoken.output_paths,
+                                    "sentences": [item.__dict__ for item in spoken.sentences],
+                                },
+                                indent=2,
+                                ensure_ascii=False,
+                            )
+                            + "\n",
+                            encoding="utf-8",
+                        )
+                        print(f"speak_json: {output_path}")
+                    return 0
                 result = synthesize_speech(summary, output, config=voice_config)
             except Exception as exc:
                 print(f"Voice error: {exc}")
@@ -1570,20 +1957,26 @@ def main() -> int:
             sys.path.insert(0, str(mvp_dir))
         from story_session import (
             StoryPaths,
+            build_character_sheet,
+            build_night_pillow_note,
             build_story_drafts,
             build_story_recap,
             export_story,
+            latest_story_session,
             list_story_sessions,
             load_story_blanket_policy,
             load_story_state,
             print_story_recap,
             process_answer,
             process_fragment,
+            resolve_resume_story_id,
             resolve_story_paths,
             run_story_tell,
             run_story_voice_tell,
+            search_stories,
         )
         from voice_adapter import (
+            apply_quiet_config,
             build_tts_summary,
             load_voice_config,
             persist_voice_turn_artifacts,
@@ -1594,7 +1987,11 @@ def main() -> int:
 
         story_root = Path(args.story_root)
         story_policy = load_story_blanket_policy(Path(args.blanket_policy))
-        voice_config = load_voice_config(Path(args.voice_config))
+        voice_config = apply_quiet_config(load_voice_config(Path(args.voice_config)), quiet=args.quiet)
+        memory_journal = Path(args.memory_journal)
+        resume_id = resolve_resume_story_id(story_root, args.story_id, args.resume or args.action == "resume")
+        if resume_id:
+            args.story_id = resume_id
 
         if args.action == "list":
             items = list_story_sessions(story_root)
@@ -1619,6 +2016,63 @@ def main() -> int:
                 print(f"list_json: {output_path}")
             return 0
 
+        if args.action == "search":
+            if not args.query:
+                print("Input error: --query is required for story search.")
+                return 2
+            hits = search_stories(
+                story_root=story_root,
+                query=args.query,
+                top_k=max(1, args.top_k),
+                min_score=args.min_score,
+            )
+            print("")
+            print("=== bedagent story search ===")
+            print(f"query: {args.query}")
+            print(f"returned: {len(hits)}")
+            for idx, hit in enumerate(hits, start=1):
+                entry = hit["entry"]
+                print(
+                    f"{idx}. score={hit['score']:.4f} story_id={entry['story_id']} "
+                    f"title={entry['title']}"
+                )
+                print(f"   main: {entry.get('main_thread', '')}")
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps({"query": args.query, "hits": hits}, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"search_json: {output_path}")
+            return 0
+
+        if args.action == "resume":
+            latest = latest_story_session(story_root)
+            if not latest:
+                print("Input error: no story sessions to resume.")
+                return 2
+            paths = resolve_story_paths(story_root, latest["story_id"], None)
+            session, bible = load_story_state(paths, None)
+            recap = build_story_recap(bible, session)
+            print("")
+            print("=== bedagent story resume ===")
+            print(f"story_id: {latest['story_id']}")
+            if args.night:
+                print(build_night_pillow_note(bible, session))
+            else:
+                print_story_recap(recap)
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps({"story_id": latest["story_id"], "recap": recap}, indent=2, ensure_ascii=False)
+                    + "\n",
+                    encoding="utf-8",
+                )
+                print(f"resume_json: {output_path}")
+            return 0
+
         if args.action == "tell":
             seed = None
             if args.seed_file:
@@ -1631,6 +2085,8 @@ def main() -> int:
                 policy=story_policy,
                 auto_confirm=args.auto_confirm,
                 non_interactive=args.non_interactive,
+                use_llm=args.use_llm,
+                memory_journal_path=memory_journal,
             )
             if args.output_json:
                 output_path = Path(args.output_json)
@@ -1660,7 +2116,10 @@ def main() -> int:
                     auto_confirm=args.auto_confirm,
                     non_interactive=args.non_interactive,
                     use_mic=args.mic,
-                    play_reply=args.play_reply,
+                    play_reply=args.play_reply and not args.quiet,
+                    use_llm=args.use_llm,
+                    memory_journal_path=memory_journal,
+                    quiet=args.quiet,
                 )
             except Exception as exc:
                 print(f"Voice error: {exc}")
@@ -1682,7 +2141,12 @@ def main() -> int:
                 return 2
             session, bible = load_story_state(paths, args.title)
             recap = build_story_recap(bible, session)
-            print_story_recap(recap)
+            if args.night:
+                print("")
+                print("=== bedagent story night recap ===")
+                print(build_night_pillow_note(bible, session))
+            else:
+                print_story_recap(recap)
             if args.output_json:
                 output_path = Path(args.output_json)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1711,6 +2175,8 @@ def main() -> int:
                     policy=story_policy,
                     auto_confirm=args.auto_confirm,
                     non_interactive=args.non_interactive,
+                    use_llm=args.use_llm,
+                    memory_journal_path=memory_journal,
                 )
             except ValueError as exc:
                 print(f"Input error: {exc}")
@@ -1744,7 +2210,9 @@ def main() -> int:
                 answer = Path(args.answer_file).read_text(encoding="utf-8").strip()
             session, bible = load_story_state(paths, args.title)
             try:
-                result = process_answer(paths, answer or "", session, bible)
+                result = process_answer(
+                    paths, answer or "", session, bible, memory_journal_path=memory_journal
+                )
             except ValueError as exc:
                 print(f"Input error: {exc}")
                 return 2
@@ -1767,7 +2235,14 @@ def main() -> int:
                 print(f"Input error: story session not found at {paths.root}")
                 return 2
             session, bible = load_story_state(paths, args.title)
-            result = build_story_drafts(paths, bible, session)
+            result = build_story_drafts(
+                paths,
+                bible,
+                session,
+                expand=args.expand,
+                use_llm=args.use_llm,
+                night=args.night,
+            )
             print("")
             print("=== bedagent story draft ===")
             print(f"story_id: {paths.root.name}")
@@ -1775,6 +2250,8 @@ def main() -> int:
             print(f"outline: {result['outline_path']}")
             print(f"sketch: {result['chapter_sketch_path']}")
             print(f"pillow: {result['pillow_note_path']}")
+            if result.get("prose_path"):
+                print(f"prose: {result['prose_path']}")
             if args.output_json:
                 output_path = Path(args.output_json)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1800,6 +2277,25 @@ def main() -> int:
                 print(f"export_json: {output_path}")
             return 0
 
+        if args.action == "characters":
+            if not paths.root.exists():
+                print(f"Input error: story session not found at {paths.root}")
+                return 2
+            session, bible = load_story_state(paths, args.title)
+            sheet = build_character_sheet(bible)
+            print("")
+            print(sheet)
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps({"story_id": paths.root.name, "characters": bible.get("characters", [])}, indent=2, ensure_ascii=False)
+                    + "\n",
+                    encoding="utf-8",
+                )
+                print(f"characters_json: {output_path}")
+            return 0
+
         if args.action == "voice-once":
             if not args.audio_file:
                 print("Input error: --audio-file is required for story voice-once.")
@@ -1819,6 +2315,11 @@ def main() -> int:
                     voice_config_path=Path(args.voice_config),
                     auto_confirm=args.auto_confirm,
                     non_interactive=args.non_interactive,
+                    use_llm=args.use_llm,
+                    memory_journal_path=memory_journal,
+                    quiet=args.quiet,
+                    vad=args.vad,
+                    tts_stream=args.tts_stream,
                 )
             except Exception as exc:
                 print(f"Voice error: {exc}")
@@ -1826,12 +2327,23 @@ def main() -> int:
             print("")
             print("=== bedagent story voice-once ===")
             print(f"story_id: {payload['story_id']}")
-            print(f"asr_model: {payload['asr_model']}")
-            print(f"transcript: {payload['transcript']}")
-            print(f"applied: {payload['applied']}")
-            print(payload["agent_reply"])
-            print(f"tts_model: {payload['tts_model']}")
-            print(f"reply_audio: {payload['reply_audio']}")
+            print(f"asr_model: {payload.get('asr_model', '-')}")
+            if payload.get("skipped"):
+                print(f"skipped: {payload.get('skip_reason', True)}")
+            if payload.get("vad"):
+                print(f"vad_segments: {len(payload.get('segments') or [])}")
+                print(f"vad_turns: {len(payload.get('turns') or [])}")
+            if args.stream:
+                for item in payload.get("partials") or []:
+                    marker = "final" if item.get("is_final") else "partial"
+                    print(f"  [{marker}] {item.get('text', '')}")
+            print(f"transcript: {payload.get('transcript', '')}")
+            print(f"applied: {payload.get('applied')}")
+            print(payload.get("agent_reply", ""))
+            if payload.get("tts_model"):
+                print(f"tts_model: {payload['tts_model']}")
+            if payload.get("reply_audio"):
+                print(f"reply_audio: {payload['reply_audio']}")
             if args.output_json:
                 output_path = Path(args.output_json)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
