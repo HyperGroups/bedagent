@@ -374,6 +374,57 @@ export function processAnswer(session, bible, answer) {
   return { session, bible, agent_reply: agentReply };
 }
 
+export function buildChapterSketch(session, bible) {
+  const title = bible.title || "未命名故事";
+  const active = (bible.plot_threads || []).filter((t) => t.status === "active");
+  const parked = (bible.plot_threads || []).filter((t) => t.status === "parked");
+  const lines = [
+    `# ${title} — 第 ${(bible.drafts?.chapter_count || 0) + 1} 章草图`,
+    "",
+    "## 本章目标",
+    `- 推进主线：${bible.main_thread || ""}`,
+    "",
+    "## 建议场景",
+  ];
+  if (active.length) active.slice(0, 5).forEach((t, i) => lines.push(`${i + 1}. ${t.label}`));
+  else lines.push("- （尚无活跃线索，继续口述一段情节）");
+  lines.push("", "## 人物状态");
+  if (bible.characters?.length) {
+    bible.characters.slice(0, 8).forEach((c) => {
+      lines.push(`- **${c.name}**：${(c.notes || []).slice(0, 2).join("；") || "待补充"}`);
+    });
+  } else {
+    lines.push("- （尚未建立人物卡）");
+  }
+  if (parked.length) {
+    lines.push("", "## 可埋伏笔（暂存）");
+    parked.slice(0, 4).forEach((t) => lines.push(`- ${t.label}`));
+  }
+  if (bible.open_questions?.length) {
+    lines.push("", "## 写之前先对齐");
+    bible.open_questions.slice(-5).forEach((q) => lines.push(`- ${q}`));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function buildChapterProse(session, bible) {
+  const title = bible.title || "未命名故事";
+  const main = bible.main_thread || "";
+  const recap = bible.recent_recap || main;
+  const names = (bible.characters || []).map((c) => c.name).filter(Boolean).slice(0, 4).join("、") || "还没点名的人";
+  const place = bible.setting?.place || "尚未标明的场景";
+  const active = (bible.plot_threads || []).filter((t) => t.status === "active");
+  const paragraphs = [
+    `${recap}空气还没散。${names}停在${place}里，谁也不先把下一句说完。`,
+    `这一章必须碰到主线：${main}。旁支可以亮一下，但不能把镜头抢走。`,
+  ];
+  if (active.length) {
+    paragraphs.push(`眼前先处理：${active.slice(0, 3).map((t) => t.label).join("；")}。`);
+  }
+  paragraphs.push("下一段口述从冲突落地处接着讲：谁先动，谁先瞒，谁先付出代价。");
+  return [`# ${title} — 扩写`, "", ...paragraphs].join("\n\n") + "\n";
+}
+
 export function buildOutlineMarkdown(session, bible) {
   const lines = [
     `# ${bible.title} — 故事大纲`,

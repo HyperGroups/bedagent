@@ -75,6 +75,29 @@ python3 mvp/bedagent_mvp.py validate-explain \
   --expected-schema 1.0.0
 ```
 
+Diff two run explains:
+
+```bash
+python3 mvp/bedagent_mvp.py explain-diff \
+  --left .bedagent/runs/<id-a>/manifest.json \
+  --right .bedagent/runs/<id-b>/manifest.json
+```
+
+Story search (CJK-aware):
+
+```bash
+python3 mvp/bedagent_mvp.py story search --query "维修AI 冬眠舰" --top-k 3
+```
+
+Resume latest session, expand a chapter, and unified search:
+
+```bash
+python3 mvp/bedagent_mvp.py story resume
+python3 mvp/bedagent_mvp.py story draft --resume --expand --use-llm
+python3 mvp/bedagent_mvp.py story characters --resume
+python3 mvp/bedagent_mvp.py search --query "林澜 冬眠舰" --top-k 5
+```
+
 List managed worktrees:
 
 ```bash
@@ -154,6 +177,8 @@ Interactive commands inside `story tell`:
 
 - `/answer` — reply to Sage open questions
 - `/draft` — write `drafts/chapter-NN-sketch.md` and `drafts/outline.md`
+- `/expand` — expand the sketch into `drafts/chapter-NN-prose.md`
+- `/characters` — print character cards (role / desire / conflict)
 - `/export` — write `exports/story-bible.md` and `exports/transcript.md`
 - `/questions` — show pending alignment questions
 - `/recap` — bedside recap
@@ -189,6 +214,7 @@ python3 mvp/bedagent_mvp.py story voice-once \
   --auto-confirm
 
 python3 mvp/bedagent_mvp.py story voice --title "会做梦的维修AI" --mic --play-reply
+python3 mvp/bedagent_mvp.py story voice-once --resume --audio-file input.wav --quiet --auto-confirm
 ```
 
 Simulated voice (no DashScope ASR/TTS call):
@@ -229,8 +255,11 @@ python3 mvp/bedagent_web.py --port 8765
 - `memory-search` supports `--risk-level`, `--act-status`, `--since` pre-filters.
 - `memory-search` supports `--min-score` and `--explain` for result control.
 - `validate-explain` subcommand: validates `policy_explain` schema and required fields.
-- `story` subcommand: oral storytelling loop (`tell`, `voice`, `voice-once`, `once`, `recap`, `answer`, `draft`, `export`, `list`) with bible, blanket, draft sandbox, and DashScope voice adapter.
-- `voice` subcommand: DashScope ASR/TTS (`transcribe`, `speak`).
+- `explain-diff` subcommand: diffs `policy_explain` between two manifests.
+- `story` subcommand: oral storytelling loop (`tell`, `voice`, `voice-once`, `once`, `recap`, `answer`, `draft`, `export`, `list`, `search`, `resume`, `characters`) with bible, blanket, draft sandbox, DashScope voice, optional Qwen Sage, chapter expansion, and memory journal sync.
+- `voice` subcommand: DashScope ASR/TTS (`transcribe`, `speak`); `--quiet` / `BEDAGENT_TTS_QUIET=1` shortens night TTS.
+- `search` subcommand: unified TF-IDF search across memory journal and story sessions.
+- `--use-llm` / `BEDAGENT_LLM=1`: optional DashScope Qwen enhancement (`BEDAGENT_LLM_SIMULATE=1` for offline), including `story draft --expand`.
 
 ## Output artifacts
 

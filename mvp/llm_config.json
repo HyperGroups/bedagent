@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0.0",
+  "provider": "dashscope",
+  "model": "qwen-plus",
+  "timeout_seconds": 20,
+  "max_questions": 3,
+  "max_expand_chars": 1800,
+  "enabled_by_default": false
+}
