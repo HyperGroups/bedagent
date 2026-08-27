@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 POLICY_EXPLAIN_SCHEMA_VERSION = "1.0.0"
+MANIFEST_SCHEMA_VERSION = "1.0.0"
 
 
 DEFAULT_RED_KEYWORDS = {
@@ -695,7 +696,14 @@ def summarize_recent_entries(entries: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def tokenize_text(value: str) -> list[str]:
-    return re.findall(r"[a-z]{3,}", value.lower())
+    tokens = re.findall(r"[a-z]{3,}", value.lower())
+    for run in re.findall(r"[\u4e00-\u9fff]+", value):
+        if len(run) == 1:
+            continue
+        tokens.append(run)
+        if len(run) > 2:
+            tokens.extend(run[i : i + 2] for i in range(len(run) - 1))
+    return tokens
 
 
 def compute_idf(doc_tokens: list[list[str]]) -> dict[str, float]:
@@ -764,6 +772,42 @@ def semantic_memory_search(entries: list[dict[str, Any]], query: str, top_k: int
 def apply_min_score(hits: list[dict[str, Any]], min_score: float) -> list[dict[str, Any]]:
     threshold = max(0.0, float(min_score))
     return [hit for hit in hits if float(hit.get("score", 0.0)) >= threshold]
+
+
+def diff_policy_explain(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    left_explain = left.get("policy_explain") if "policy_explain" in left else left
+    right_explain = right.get("policy_explain") if "policy_explain" in right else right
+    if not isinstance(left_explain, dict):
+        left_explain = {}
+    if not isinstance(right_explain, dict):
+        right_explain = {}
+    changes: list[dict[str, Any]] = []
+    for field in ("schema_version", "final_status"):
+        if left_explain.get(field) != right_explain.get(field):
+            changes.append(
+                {"field": field, "left": left_explain.get(field), "right": right_explain.get(field)}
+            )
+    left_gates = [item.get("gate") for item in left_explain.get("gates", []) if isinstance(item, dict)]
+    right_gates = [item.get("gate") for item in right_explain.get("gates", []) if isinstance(item, dict)]
+    if left_gates != right_gates:
+        changes.append({"field": "gates", "left": left_gates, "right": right_gates})
+    left_confirm = next((g for g in left_explain.get("gates", []) if g.get("gate") == "confirm"), {})
+    right_confirm = next((g for g in right_explain.get("gates", []) if g.get("gate") == "confirm"), {})
+    if left_confirm.get("approved") != right_confirm.get("approved"):
+        changes.append(
+            {
+                "field": "confirm.approved",
+                "left": left_confirm.get("approved"),
+                "right": right_confirm.get("approved"),
+            }
+        )
+    return {
+        "changed": bool(changes),
+        "change_count": len(changes),
+        "left_status": left_explain.get("final_status"),
+        "right_status": right_explain.get("final_status"),
+        "changes": changes,
+    }
 
 
 def build_recap(journal_path: Path, limit: int) -> dict[str, Any]:
@@ -1000,6 +1044,7 @@ def run_closed_loop(
     policy_explain = build_policy_explain_chain(blanket=blanket, confirm=confirm, act=act)
 
     manifest = {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
         "run_id": run_id,
         "generated_at": now_iso(),
         "flow": (
@@ -1215,10 +1260,15 @@ def parse_args() -> argparse.Namespace:
         help="expected policy_explain schema version",
     )
 
+    explain_diff = sub.add_parser("explain-diff", help="diff policy_explain between two manifests")
+    explain_diff.add_argument("--left", required=True, help="path to left manifest.json")
+    explain_diff.add_argument("--right", required=True, help="path to right manifest.json")
+    explain_diff.add_argument("--output-json", help="optional path to write diff JSON")
+
     story = sub.add_parser("story", help="oral storytelling loop (口述写故事)")
     story.add_argument(
         "action",
-        choices=["tell", "once", "recap", "answer", "draft", "export", "list", "voice", "voice-once"],
+        choices=["tell", "once", "recap", "answer", "draft", "export", "list", "voice", "voice-once", "search"],
         help="tell/voice=interactive, once/voice-once=single turn, recap/draft/export/list/answer",
     )
     story.add_argument("--title", help="story title for a new session")
@@ -1290,6 +1340,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="auto-play TTS reply audio when sounddevice is available",
     )
+    story.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="optionally enhance Sage questions with DashScope Qwen (or BEDAGENT_LLM_SIMULATE)",
+    )
+    story.add_argument("--query", help="search query for story search")
+    story.add_argument("--top-k", default=3, type=int, help="story search result count")
+    story.add_argument("--min-score", default=0.0, type=float, help="story search minimum score")
 
     voice = sub.add_parser("voice", help="DashScope ASR/TTS voice adapter (百炼语音)")
     voice.add_argument(
@@ -1490,6 +1548,26 @@ def main() -> int:
             print(f"- error: {err}")
         return 0 if ok else 1
 
+    if args.command == "explain-diff":
+        left = json.loads(Path(args.left).read_text(encoding="utf-8"))
+        right = json.loads(Path(args.right).read_text(encoding="utf-8"))
+        diff = diff_policy_explain(left, right)
+        print("")
+        print("=== bedagent policy explain diff ===")
+        print(f"left: {args.left}")
+        print(f"right: {args.right}")
+        print(f"changed: {diff['changed']} count={diff['change_count']}")
+        print(f"left_status: {diff['left_status']}")
+        print(f"right_status: {diff['right_status']}")
+        for item in diff["changes"]:
+            print(f"- {item['field']}: {item['left']} -> {item['right']}")
+        if args.output_json:
+            output_path = Path(args.output_json)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(diff, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            print(f"diff_json: {output_path}")
+        return 0
+
     if args.command == "voice":
         import sys
 
@@ -1582,6 +1660,7 @@ def main() -> int:
             resolve_story_paths,
             run_story_tell,
             run_story_voice_tell,
+            search_stories,
         )
         from voice_adapter import (
             build_tts_summary,
@@ -1619,6 +1698,37 @@ def main() -> int:
                 print(f"list_json: {output_path}")
             return 0
 
+        if args.action == "search":
+            if not args.query:
+                print("Input error: --query is required for story search.")
+                return 2
+            hits = search_stories(
+                story_root=story_root,
+                query=args.query,
+                top_k=max(1, args.top_k),
+                min_score=args.min_score,
+            )
+            print("")
+            print("=== bedagent story search ===")
+            print(f"query: {args.query}")
+            print(f"returned: {len(hits)}")
+            for idx, hit in enumerate(hits, start=1):
+                entry = hit["entry"]
+                print(
+                    f"{idx}. score={hit['score']:.4f} story_id={entry['story_id']} "
+                    f"title={entry['title']}"
+                )
+                print(f"   main: {entry.get('main_thread', '')}")
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps({"query": args.query, "hits": hits}, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"search_json: {output_path}")
+            return 0
+
         if args.action == "tell":
             seed = None
             if args.seed_file:
@@ -1631,6 +1741,7 @@ def main() -> int:
                 policy=story_policy,
                 auto_confirm=args.auto_confirm,
                 non_interactive=args.non_interactive,
+                use_llm=args.use_llm,
             )
             if args.output_json:
                 output_path = Path(args.output_json)
@@ -1661,6 +1772,7 @@ def main() -> int:
                     non_interactive=args.non_interactive,
                     use_mic=args.mic,
                     play_reply=args.play_reply,
+                    use_llm=args.use_llm,
                 )
             except Exception as exc:
                 print(f"Voice error: {exc}")
@@ -1711,6 +1823,7 @@ def main() -> int:
                     policy=story_policy,
                     auto_confirm=args.auto_confirm,
                     non_interactive=args.non_interactive,
+                    use_llm=args.use_llm,
                 )
             except ValueError as exc:
                 print(f"Input error: {exc}")

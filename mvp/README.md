@@ -75,6 +75,20 @@ python3 mvp/bedagent_mvp.py validate-explain \
   --expected-schema 1.0.0
 ```
 
+Diff two run explains:
+
+```bash
+python3 mvp/bedagent_mvp.py explain-diff \
+  --left .bedagent/runs/<id-a>/manifest.json \
+  --right .bedagent/runs/<id-b>/manifest.json
+```
+
+Story search (CJK-aware):
+
+```bash
+python3 mvp/bedagent_mvp.py story search --query "维修AI 冬眠舰" --top-k 3
+```
+
 List managed worktrees:
 
 ```bash
@@ -229,8 +243,10 @@ python3 mvp/bedagent_web.py --port 8765
 - `memory-search` supports `--risk-level`, `--act-status`, `--since` pre-filters.
 - `memory-search` supports `--min-score` and `--explain` for result control.
 - `validate-explain` subcommand: validates `policy_explain` schema and required fields.
-- `story` subcommand: oral storytelling loop (`tell`, `voice`, `voice-once`, `once`, `recap`, `answer`, `draft`, `export`, `list`) with bible, blanket, draft sandbox, and DashScope voice adapter.
+- `explain-diff` subcommand: diffs `policy_explain` between two manifests.
+- `story` subcommand: oral storytelling loop (`tell`, `voice`, `voice-once`, `once`, `recap`, `answer`, `draft`, `export`, `list`, `search`) with bible, blanket, draft sandbox, DashScope voice, and optional Qwen Sage.
 - `voice` subcommand: DashScope ASR/TTS (`transcribe`, `speak`).
+- `--use-llm` / `BEDAGENT_LLM=1`: optional DashScope Qwen enhancement (`BEDAGENT_LLM_SIMULATE=1` for offline).
 
 ## Output artifacts
 

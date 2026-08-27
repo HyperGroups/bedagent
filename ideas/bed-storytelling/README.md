@@ -105,5 +105,5 @@ story 模式作为 **平行情景适配器** 验证控制层可迁移性，不�
 1. ~~Voice 适配器：把 `--fragment` 换成语音转写流~~ ✅ DashScope ASR/TTS + `story voice`
 2. ~~章节 Act 沙盒：把 `expand` 线索落成 `drafts/chapter-N.md`~~ ✅ `story draft`
 3. ~~Blanket 策略：删人设 / 改主线等「红色」改动必须确认~~ ✅ `story_blanket_policy.json`
-4. embedding 检索：跨故事会话找相似伏笔；
-5. LLM 适配器：可选接入模型增强 Sage 追问与章节扩写（保持控制层不变）。
+4. embedding 检索：跨故事会话找相似伏笔。 ✅ `story search`（TF-IDF，v0.9）
+5. LLM 适配器：可选接入模型增强 Sage 追问与章节扩写（保持控制层不变）。 ✅ `--use-llm` / DashScope Qwen（v0.9，章节扩写仍为启发式草稿）

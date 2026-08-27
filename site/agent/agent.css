@@ -257,8 +257,21 @@
   margin: 0.15rem 0 0;
 }
 
-.bible-block {
-  padding: 0 1.3rem 1rem;
+.search-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.search-row input,
+#session-picker {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  color: var(--text);
+  flex: 1;
+  font: inherit;
+  padding: 0.45rem 0.7rem;
+  width: 100%;
 }
 
 .bible-block h3 {
