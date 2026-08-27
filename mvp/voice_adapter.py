@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import struct
 import wave
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -54,10 +55,29 @@ def load_voice_config(path: Path | None = None) -> dict[str, Any]:
     payload.setdefault("tts_voice", "longxiaochun")
     payload.setdefault("sample_rate", 16000)
     payload.setdefault("max_tts_chars", 220)
+    payload.setdefault("quiet_mode", False)
+    payload.setdefault("quiet_max_tts_chars", 72)
     payload.setdefault("secret_block_keywords", [])
     payload.setdefault("region", "cn-beijing")
     payload.setdefault("workspace_id", "")
     payload.setdefault("mic_seconds", 8)
+    return payload
+
+
+def tts_quiet_enabled(config: dict[str, Any] | None = None, quiet: bool | None = None) -> bool:
+    if quiet is True:
+        return True
+    if os.environ.get("BEDAGENT_TTS_QUIET", "").lower() in {"1", "true", "yes"}:
+        return True
+    return bool((config or {}).get("quiet_mode"))
+
+
+def apply_quiet_config(config: dict[str, Any] | None, quiet: bool | None = None) -> dict[str, Any]:
+    payload = dict(config or load_voice_config())
+    if tts_quiet_enabled(payload, quiet=quiet):
+        payload["quiet_mode"] = True
+        quiet_limit = int(payload.get("quiet_max_tts_chars", 72))
+        payload["max_tts_chars"] = min(int(payload.get("max_tts_chars", 220)), quiet_limit)
     return payload
 
 
@@ -204,7 +224,7 @@ def sanitize_tts_text(text: str, config: dict[str, Any]) -> str:
 
 
 def build_tts_summary(agent_reply: str, config: dict[str, Any] | None = None) -> str:
-    config = config or load_voice_config()
+    config = apply_quiet_config(config or load_voice_config())
     lines = [line.strip() for line in agent_reply.splitlines() if line.strip()]
     if not lines:
         return "收到。"
@@ -222,6 +242,8 @@ def build_tts_summary(agent_reply: str, config: dict[str, Any] | None = None) ->
     summary = "。".join(item for item in preferred if item)
     if not summary:
         summary = lines[0]
+    if tts_quiet_enabled(config):
+        summary = preferred[0] if preferred else lines[0]
     return sanitize_tts_text(summary, config)
 
 
@@ -231,7 +253,7 @@ def synthesize_speech(
     config: dict[str, Any] | None = None,
     config_path: Path | None = None,
 ) -> SpeakResult:
-    config = config or load_voice_config(config_path)
+    config = apply_quiet_config(config or load_voice_config(config_path))
     speak_text = sanitize_tts_text(text, config)
     if not speak_text:
         raise VoiceAdapterError("TTS text is empty after sanitization.")
@@ -292,7 +314,32 @@ def map_voice_command(text: str, config: dict[str, Any]) -> str | None:
                     return "/quit"
                 if command == "continue":
                     return "/continue"
+                if command == "draft":
+                    return "/draft"
+                if command == "export":
+                    return "/export"
+                if command == "expand":
+                    return "/expand"
+                if command == "quiet":
+                    return "/quiet"
+                if command == "characters":
+                    return "/characters"
     return None
+
+
+def wav_silence_ratio(audio_path: Path, threshold: int = 400) -> float:
+    path = audio_path.expanduser().resolve()
+    with wave.open(str(path), "rb") as handle:
+        channels = max(1, handle.getnchannels())
+        width = handle.getsampwidth()
+        frames = handle.getnframes()
+        raw = handle.readframes(frames)
+    sample_count = frames * channels
+    if sample_count <= 0 or width != 2 or len(raw) < sample_count * 2:
+        return 1.0 if sample_count <= 0 else 0.0
+    samples = struct.unpack("<" + "h" * sample_count, raw[: sample_count * 2])
+    silent = sum(1 for sample in samples if abs(sample) < threshold)
+    return silent / sample_count
 
 
 def record_microphone_wav(

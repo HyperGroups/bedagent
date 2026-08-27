@@ -20,6 +20,8 @@ MVP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = MVP_DIR.parent
 SITE_DIR = REPO_ROOT / "site"
 STORY_ROOT = REPO_ROOT / ".bedagent" / "stories"
+MEMORY_JOURNAL = REPO_ROOT / ".bedagent" / "memory" / "journal.ndjson"
+PRODUCT_MILESTONE = "v0.10.0-mvp"
 
 
 def ensure_mvp_path() -> None:
@@ -90,7 +92,15 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                     "site_root": str(SITE_DIR),
                     "voice_available": bool(__import__("os").environ.get("DASHSCOPE_API_KEY")),
                     "llm": llm_status(),
-                    "product_milestone": "v0.9.0-mvp",
+                    "product_milestone": PRODUCT_MILESTONE,
+                    "features": [
+                        "story-resume",
+                        "story-expand",
+                        "story-memory",
+                        "unified-search",
+                        "quiet-tts",
+                        "character-sheet",
+                    ],
                 },
             )
             return
@@ -101,12 +111,25 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
         if path == "/api/story/list":
             self.handle_story_list()
             return
+        if path == "/api/story/latest":
+            self.handle_story_latest()
+            return
         if path == "/api/story/search":
             self.handle_story_search(parsed.query)
             return
+        if path == "/api/search":
+            self.handle_unified_search(parsed.query)
+            return
+        if path.startswith("/api/story/") and path.endswith("/characters") and path.count("/") == 4:
+            story_id = path.split("/")[3]
+            self.handle_story_characters(story_id)
+            return
         if path.startswith("/api/story/") and path.count("/") == 3:
             story_id = path.split("/")[-1]
-            self.handle_story_get(story_id)
+            if story_id not in {"list", "search", "latest", "fragment", "answer", "draft", "export"}:
+                self.handle_story_get(story_id)
+                return
+            super().do_GET()
             return
         super().do_GET()
 
@@ -125,6 +148,15 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/story/search":
             self.handle_story_search_post()
+            return
+        if parsed.path == "/api/story/draft":
+            self.handle_story_draft()
+            return
+        if parsed.path == "/api/story/export":
+            self.handle_story_export()
+            return
+        if parsed.path == "/api/search":
+            self.handle_unified_search_post()
             return
         if parsed.path == "/api/voice/transcribe":
             self.handle_voice_transcribe()
@@ -221,6 +253,153 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             json_response(self, 500, {"error": str(exc)})
 
+    def handle_unified_search(self, query_string: str) -> None:
+        ensure_mvp_path()
+        from urllib.parse import parse_qs
+
+        from bedagent_mvp import unified_search
+
+        params = parse_qs(query_string)
+        query = (params.get("q") or params.get("query") or [""])[0]
+        if not query.strip():
+            json_response(self, 400, {"error": "q is required"})
+            return
+        hits = unified_search(
+            query=query,
+            journal_path=MEMORY_JOURNAL,
+            story_root=STORY_ROOT,
+            top_k=int((params.get("top_k") or ["5"])[0]),
+            min_score=float((params.get("min_score") or ["0"])[0]),
+        )
+        json_response(self, 200, {"query": query, "hits": hits})
+
+    def handle_unified_search_post(self) -> None:
+        ensure_mvp_path()
+        from bedagent_mvp import unified_search
+
+        try:
+            payload = read_json_body(self)
+            query = str(payload.get("query") or payload.get("q") or "").strip()
+            if not query:
+                json_response(self, 400, {"error": "query is required"})
+                return
+            hits = unified_search(
+                query=query,
+                journal_path=MEMORY_JOURNAL,
+                story_root=STORY_ROOT,
+                top_k=int(payload.get("top_k", 5)),
+                min_score=float(payload.get("min_score", 0.0)),
+            )
+            json_response(self, 200, {"query": query, "hits": hits})
+        except Exception as exc:
+            json_response(self, 500, {"error": str(exc)})
+
+    def handle_story_latest(self) -> None:
+        ensure_mvp_path()
+        from story_session import latest_story_session, load_story_state, resolve_story_paths
+
+        latest = latest_story_session(STORY_ROOT)
+        if not latest:
+            json_response(self, 404, {"error": "no story sessions"})
+            return
+        paths = resolve_story_paths(STORY_ROOT, latest["story_id"], None)
+        session, bible = load_story_state(paths, None)
+        json_response(self, 200, {"story_id": latest["story_id"], "session": session, "bible": bible})
+
+    def handle_story_characters(self, story_id: str) -> None:
+        ensure_mvp_path()
+        from story_session import build_character_sheet, load_story_state, resolve_story_paths
+
+        paths = resolve_story_paths(STORY_ROOT, story_id, None)
+        if not paths.root.exists():
+            json_response(self, 404, {"error": f"story not found: {story_id}"})
+            return
+        session, bible = load_story_state(paths, None)
+        json_response(
+            self,
+            200,
+            {
+                "story_id": story_id,
+                "characters": bible.get("characters", []),
+                "sheet": build_character_sheet(bible),
+                "session": session,
+            },
+        )
+
+    def _load_story_or_404(self, story_id: str | None, title: str | None = None):
+        from story_session import load_story_state, resolve_story_paths
+
+        if not story_id:
+            return None, None, None, "story_id is required"
+        paths = resolve_story_paths(STORY_ROOT, story_id, title)
+        if not paths.root.exists():
+            return None, None, None, f"story not found: {story_id}"
+        session, bible = load_story_state(paths, title)
+        return paths, session, bible, None
+
+    def handle_story_draft(self) -> None:
+        ensure_mvp_path()
+        from story_session import build_story_drafts
+
+        try:
+            payload = read_json_body(self)
+            paths, session, bible, error = self._load_story_or_404(payload.get("story_id"), payload.get("title"))
+            if error:
+                json_response(self, 404 if "not found" in error else 400, {"error": error})
+                return
+            result = build_story_drafts(
+                paths,
+                bible,
+                session,
+                expand=bool(payload.get("expand", False)),
+                use_llm=bool(payload.get("use_llm", False)),
+                night=bool(payload.get("night", False)),
+            )
+            json_response(
+                self,
+                200,
+                {
+                    "story_id": paths.root.name,
+                    "chapter_number": result["chapter_number"],
+                    "pillow_note": result.get("pillow_note", ""),
+                    "outline": result.get("outline", ""),
+                    "sketch": result.get("sketch", ""),
+                    "prose": result.get("prose", ""),
+                    "characters": result.get("characters", ""),
+                    "outline_path": result.get("outline_path"),
+                    "chapter_sketch_path": result.get("chapter_sketch_path"),
+                    "prose_path": result.get("prose_path", ""),
+                    "llm": result.get("llm"),
+                },
+            )
+        except Exception as exc:
+            json_response(self, 500, {"error": str(exc)})
+
+    def handle_story_export(self) -> None:
+        ensure_mvp_path()
+        from story_session import export_story
+
+        try:
+            payload = read_json_body(self)
+            paths, session, bible, error = self._load_story_or_404(payload.get("story_id"), payload.get("title"))
+            if error:
+                json_response(self, 404 if "not found" in error else 400, {"error": error})
+                return
+            result = export_story(paths, bible, session)
+            json_response(
+                self,
+                200,
+                {
+                    "story_id": paths.root.name,
+                    "story_bible_path": result["story_bible_path"],
+                    "transcript_path": result["transcript_path"],
+                    "story_bible": Path(result["story_bible_path"]).read_text(encoding="utf-8"),
+                    "transcript": Path(result["transcript_path"]).read_text(encoding="utf-8"),
+                },
+            )
+        except Exception as exc:
+            json_response(self, 500, {"error": str(exc)})
+
     def handle_story_fragment(self) -> None:
         from story_session import load_story_state, process_fragment, resolve_story_paths
 
@@ -243,6 +422,7 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                 auto_confirm=bool(payload.get("auto_confirm", True)),
                 non_interactive=bool(payload.get("non_interactive", False)),
                 use_llm=bool(payload.get("use_llm", False)),
+                memory_journal_path=MEMORY_JOURNAL,
             )
             json_response(
                 self,
@@ -281,7 +461,7 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                     json_response(self, 400, {"error": "story_id or session+bible required"})
                     return
                 paths = _temp_story_paths()
-            result = process_answer(paths, answer, session, bible)
+            result = process_answer(paths, answer, session, bible, memory_journal_path=MEMORY_JOURNAL)
             json_response(
                 self,
                 200,
@@ -332,7 +512,7 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             json_response(self, 500, {"error": str(exc)})
 
     def handle_voice_speak(self) -> None:
-        from voice_adapter import build_tts_summary, synthesize_speech
+        from voice_adapter import apply_quiet_config, build_tts_summary, load_voice_config, synthesize_speech
 
         try:
             payload = read_json_body(self)
@@ -340,10 +520,11 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             if not text:
                 json_response(self, 400, {"error": "text is required"})
                 return
+            config = apply_quiet_config(load_voice_config(), quiet=bool(payload.get("quiet", False)))
             with tempfile.TemporaryDirectory() as tmp:
                 out = Path(tmp) / "reply.wav"
-                summary = build_tts_summary(text)
-                result = synthesize_speech(summary, out)
+                summary = build_tts_summary(text, config)
+                result = synthesize_speech(summary, out, config=config)
                 data = out.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")

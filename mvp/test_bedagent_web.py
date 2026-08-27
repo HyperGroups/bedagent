@@ -22,7 +22,7 @@ class BedagentWebTests(unittest.TestCase):
                 payload = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["service"], "bedagent_web")
-            self.assertEqual(payload["product_milestone"], "v0.9.0-mvp")
+            self.assertEqual(payload["product_milestone"], "v0.10.0-mvp")
         finally:
             server.shutdown()
 

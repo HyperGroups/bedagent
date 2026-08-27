@@ -70,7 +70,11 @@
                 <h2 id="session-title">未命名故事</h2>
               </div>
               <div class="panel-actions">
+                <button class="button secondary small" type="button" id="btn-resume">恢复最近</button>
                 <button class="button secondary small" type="button" id="btn-new-session">新故事</button>
+                <button class="button secondary small" type="button" id="btn-draft">生成草稿</button>
+                <button class="button secondary small" type="button" id="btn-expand">扩写</button>
+                <button class="button secondary small" type="button" id="btn-speak">朗读</button>
                 <button class="button secondary small" type="button" id="btn-export-md">导出 MD</button>
                 <button class="button secondary small" type="button" id="btn-export-json">导出 JSON</button>
               </div>
@@ -88,6 +92,10 @@
               <div class="input-actions">
                 <button class="button primary" type="button" id="btn-send-fragment">发送口述</button>
                 <button class="button secondary" type="button" id="btn-send-answer">对齐回答</button>
+                <label class="quiet-toggle">
+                  <input type="checkbox" id="chk-quiet" />
+                  夜间朗读
+                </label>
               </div>
             </div>
 

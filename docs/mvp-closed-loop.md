@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.9.0-mvp (prototype)
-Status: implemented (LLM optional Sage, story search, manifest schema, explain-diff, web persistence)
+Product Milestone: v0.10.0-mvp (prototype)
+Status: implemented (LLM chapter expansion, story resume, memory sync, unified search, quiet TTS, web draft/speak)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -85,6 +85,20 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    `explain-diff` compares two manifests' policy_explain chains.
 24. **Web Story Persistence**  
    local API stores sessions under `.bedagent/stories/` with list/search endpoints.
+25. **Chapter Expansion**  
+   `story draft --expand` writes prose in the draft sandbox (heuristic, optional Qwen).
+26. **Story Resume**  
+   `story resume` / `--resume` reopens the latest session.
+27. **Story Memory Sync**  
+   oral turns append to the memory journal (`kind=story`) for unified retrieval.
+28. **Unified Search**  
+   `search` / `/api/search` ranks memory + story hits together.
+29. **Quiet / Night TTS**  
+   `--quiet` / `BEDAGENT_TTS_QUIET=1` shortens speech and skips auto-play.
+30. **Character Sheet**  
+   `story characters` / `/characters` with role / desire / conflict extras.
+31. **Web Draft / Speak**  
+   Agent UI can generate drafts, expand, resume latest, and speak replies.
 
 ## Output contract
 
@@ -152,6 +166,7 @@ python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blank
 
 - Speech exists as an optional DashScope adapter; GitHub Pages still needs local API for ASR/TTS.
 - Sage reasoning is heuristic by default; DashScope Qwen is opt-in (`--use-llm` / `BEDAGENT_LLM=1`).
+- Chapter expansion stays in the draft sandbox; it does not rewrite the bible without a later oral turn.
 - No container executor yet; live execution currently focuses on git worktree path.
 - Memory retrieval is weighted lexical-semantic (TF-IDF, CJK-aware) with pre-filters; no embedding/rerank pipeline yet.
 
@@ -160,4 +175,4 @@ python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blank
 1. Add embedding-backed retrieval and rerank for memory/story search.
 2. Add scheduled/automatic retention enforcement using existing report/export path.
 3. Add container/VM adapters behind the same side-effect gate.
-4. Add streaming ASR (microphone continuous dictation).
+4. Add continuous streaming ASR beyond push-to-talk windows.

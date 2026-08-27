@@ -550,3 +550,33 @@ product_milestone: v0.9.0-mvp
 - 故事检索仍是本地 lexical，不引入向量库；
 - GitHub Pages 静态站仍可离线用 localStorage；持久化需要本地 `bedagent_web.py`。
 
+## ADR-0018：v0.10 章节扩写、会话恢复、记忆合流与夜间语音
+
+```yaml
+date: 2026-08-27
+design_version: D0.1
+status: accepted
+product_milestone: v0.10.0-mvp
+```
+
+### 决策
+
+在 v0.9 可选 LLM Sage 与故事检索之上，把床边写故事补成可恢复、可扩写、可合流的控制层：
+
+1. `story draft --expand` 在 Draft Sandbox 写章节正文（启发式默认，Qwen 可选）；
+2. `story resume` / `--resume` 打开最近会话，不强迫用户记住 story-id；
+3. 口述回合写入 memory journal（`kind=story`），`search` 同时检索记忆与故事；
+4. `--quiet` / 夜间模式缩短 TTS，默认不自动播放；
+5. 人物卡补 role / desire / conflict；Web 增加草稿、扩写、朗读、恢复最近。
+
+### 原因
+
+「全面增加功能」要落在躺着能用的闭环上：少记 id、少听长语音、草稿可展开但仍在沙盒，记忆可跨故事找回伏笔。
+
+### 边界
+
+- 扩写只写 `drafts/`，不直接改 bible 主线；
+- LLM 失败回退启发式；
+- 统一检索仍是本地 TF-IDF，不引入向量库；
+- 连续流式 ASR 仍未做，麦克风仍是 push-to-talk 窗口。
+

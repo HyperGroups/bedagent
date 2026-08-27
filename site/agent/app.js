@@ -1,4 +1,6 @@
 import {
+  buildChapterProse,
+  buildChapterSketch,
   buildOutlineMarkdown,
   downloadText,
   loadSession,
@@ -43,7 +45,12 @@ const els = {
   apiBaseHint: document.getElementById("api-base-hint"),
   recordStatus: document.getElementById("record-status"),
   playback: document.getElementById("playback"),
+  quiet: document.getElementById("chk-quiet"),
 };
+
+function quietEnabled() {
+  return Boolean(els.quiet?.checked);
+}
 
 function renderTranscript() {
   els.transcript.innerHTML = "";
@@ -89,7 +96,9 @@ function renderBible() {
   els.bibleCharacters.innerHTML = "";
   for (const c of bible.characters) {
     const li = document.createElement("li");
-    li.textContent = `${c.name}：${(c.notes || []).slice(0, 2).join("；") || "待补充"}`;
+    const role = c.role === "protagonist" ? "主角" : c.role === "antagonist" ? "对手" : c.role === "ally" ? "同伴" : "";
+    const extra = [role, c.desire ? `想要${c.desire}` : ""].filter(Boolean).join(" · ");
+    li.textContent = `${c.name}${extra ? `（${extra}）` : ""}：${(c.notes || []).slice(0, 2).join("；") || "待补充"}`;
     els.bibleCharacters.appendChild(li);
   }
 
@@ -149,7 +158,8 @@ async function detectApi() {
         apiBase = base;
         const health = await res.json();
         const llmNote = health.llm?.usable ? " · LLM 可用" : "";
-        els.apiStatus.textContent = `已连接 ${base}${llmNote}`;
+        const quietNote = quietEnabled() ? " · 夜间" : "";
+        els.apiStatus.textContent = `已连接 ${base} · ${health.product_milestone || "v0.10"}${llmNote}${quietNote}`;
         els.apiStatus.className = "api-status-value ok";
         els.apiBaseHint.textContent = `API: ${base}`;
         await refreshRemoteSessions();
@@ -377,6 +387,83 @@ async function handleVoiceTranscribe() {
   }
 }
 
+async function handleResumeLatest() {
+  if (!apiBase) {
+    appendSystem("恢复最近会话需要本地 API");
+    return;
+  }
+  try {
+    const res = await fetch(`${apiBase}/api/story/latest`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "没有可恢复的故事");
+    await loadRemoteStory(data.story_id);
+    appendSystem(`已恢复 ${data.story_id}`);
+    refreshRemoteSessions();
+  } catch (err) {
+    appendSystem(err.message || String(err));
+  }
+}
+
+async function handleDraft(expand = false) {
+  try {
+    if (apiBase && remoteStoryId) {
+      const res = await fetch(`${apiBase}/api/story/draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          story_id: remoteStoryId,
+          expand,
+          night: quietEnabled(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "draft failed");
+      const text = expand ? data.prose || data.sketch : data.sketch || data.outline;
+      appendMessage("agent", expand ? "扩写" : "草稿", text);
+      els.transcript.scrollTop = els.transcript.scrollHeight;
+      return;
+    }
+    const text = expand ? buildChapterProse(state.session, state.bible) : buildChapterSketch(state.session, state.bible);
+    appendMessage("agent", expand ? "扩写" : "草稿", text);
+    downloadText(`${state.bible.title || "story"}-${expand ? "prose" : "sketch"}.md`, text);
+  } catch (err) {
+    appendSystem(err.message || String(err));
+  }
+}
+
+async function handleSpeak() {
+  const last = [...(state.session.turns || [])].reverse().find((t) => t.agent_reply);
+  const text = last?.agent_reply || state.bible.main_thread || "";
+  if (!text) {
+    appendSystem("还没有可朗读的内容");
+    return;
+  }
+  if (!apiBase) {
+    appendSystem("朗读需要本地 API");
+    return;
+  }
+  appendSystem(quietEnabled() ? "夜间朗读中…" : "朗读中…");
+  try {
+    const res = await fetch(`${apiBase}/api/voice/speak`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, quiet: quietEnabled() }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "speak failed");
+    }
+    const blob = await res.blob();
+    els.playback.src = URL.createObjectURL(blob);
+    els.playback.classList.remove("hidden");
+    if (!quietEnabled()) {
+      els.playback.play().catch(() => {});
+    }
+  } catch (err) {
+    appendSystem(err.message || String(err));
+  }
+}
+
 function bindEvents() {
   els.modeCards.forEach((card) => {
     card.addEventListener("click", () => setMode(card.dataset.mode));
@@ -422,6 +509,16 @@ function bindEvents() {
     );
   });
 
+  document.getElementById("btn-resume")?.addEventListener("click", () => {
+    handleResumeLatest().catch((err) => appendSystem(err.message || String(err)));
+  });
+  document.getElementById("btn-draft")?.addEventListener("click", () => handleDraft(false));
+  document.getElementById("btn-expand")?.addEventListener("click", () => handleDraft(true));
+  document.getElementById("btn-speak")?.addEventListener("click", () => handleSpeak());
+  els.quiet?.addEventListener("change", () => {
+    localStorage.setItem("bedagent.quiet", quietEnabled() ? "1" : "0");
+  });
+
   els.fragmentInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
@@ -432,5 +529,8 @@ function bindEvents() {
 
 bindEvents();
 setMode("story");
+if (localStorage.getItem("bedagent.quiet") === "1" && els.quiet) {
+  els.quiet.checked = true;
+}
 persist();
 detectApi();

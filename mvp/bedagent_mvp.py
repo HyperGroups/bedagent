@@ -774,6 +774,32 @@ def apply_min_score(hits: list[dict[str, Any]], min_score: float) -> list[dict[s
     return [hit for hit in hits if float(hit.get("score", 0.0)) >= threshold]
 
 
+def unified_search(
+    query: str,
+    journal_path: Path,
+    story_root: Path,
+    top_k: int = 5,
+    min_score: float = 0.0,
+    memory_limit: int = 80,
+) -> list[dict[str, Any]]:
+    entries = read_memory_entries(journal_path, limit=max(1, memory_limit))
+    memory_hits = semantic_memory_search(entries=entries, query=query, top_k=max(1, top_k))
+    story_hits: list[dict[str, Any]] = []
+    try:
+        from story_session import search_stories
+
+        story_hits = search_stories(story_root, query, top_k=max(1, top_k), min_score=0.0)
+    except Exception:
+        story_hits = []
+    combined: list[dict[str, Any]] = []
+    for hit in memory_hits:
+        combined.append({"source": "memory", "score": hit["score"], "entry": hit["entry"], "detail": hit.get("detail", {})})
+    for hit in story_hits:
+        combined.append({"source": "story", "score": hit["score"], "entry": hit["entry"], "detail": hit.get("detail", {})})
+    combined.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+    return apply_min_score(combined, min_score)[: max(1, top_k)]
+
+
 def diff_policy_explain(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
     left_explain = left.get("policy_explain") if "policy_explain" in left else left
     right_explain = right.get("policy_explain") if "policy_explain" in right else right
@@ -1189,6 +1215,33 @@ def parse_args() -> argparse.Namespace:
         "--since",
         help="only include entries recorded at/after this ISO timestamp",
     )
+    memory_search.add_argument(
+        "--include-stories",
+        action="store_true",
+        help="also search story bibles/fragments and merge results",
+    )
+    memory_search.add_argument(
+        "--story-root",
+        default=".bedagent/stories",
+        help="story session root used with --include-stories",
+    )
+
+    search = sub.add_parser("search", help="unified search across memory journal and story sessions")
+    search.add_argument("--query", required=True, help="search query")
+    search.add_argument(
+        "--memory-journal",
+        default=".bedagent/memory/journal.ndjson",
+        help="append-only memory journal path",
+    )
+    search.add_argument(
+        "--story-root",
+        default=".bedagent/stories",
+        help="story session root",
+    )
+    search.add_argument("--top-k", default=5, type=int, help="number of results to return")
+    search.add_argument("--min-score", default=0.0, type=float, help="minimum score threshold")
+    search.add_argument("--limit", default=80, type=int, help="memory journal scan window")
+    search.add_argument("--output-json", help="optional path to write search JSON")
 
     worktree = sub.add_parser("worktree", help="manage bedagent-managed worktrees")
     worktree.add_argument(
@@ -1268,8 +1321,21 @@ def parse_args() -> argparse.Namespace:
     story = sub.add_parser("story", help="oral storytelling loop (口述写故事)")
     story.add_argument(
         "action",
-        choices=["tell", "once", "recap", "answer", "draft", "export", "list", "voice", "voice-once", "search"],
-        help="tell/voice=interactive, once/voice-once=single turn, recap/draft/export/list/answer",
+        choices=[
+            "tell",
+            "once",
+            "recap",
+            "answer",
+            "draft",
+            "export",
+            "list",
+            "voice",
+            "voice-once",
+            "search",
+            "resume",
+            "characters",
+        ],
+        help="tell/voice=interactive; resume=latest session; characters=character sheet",
     )
     story.add_argument("--title", help="story title for a new session")
     story.add_argument(
@@ -1348,6 +1414,31 @@ def parse_args() -> argparse.Namespace:
     story.add_argument("--query", help="search query for story search")
     story.add_argument("--top-k", default=3, type=int, help="story search result count")
     story.add_argument("--min-score", default=0.0, type=float, help="story search minimum score")
+    story.add_argument(
+        "--resume",
+        action="store_true",
+        help="reuse the latest story session when --story-id is omitted",
+    )
+    story.add_argument(
+        "--expand",
+        action="store_true",
+        help="expand chapter sketch into prose (story draft)",
+    )
+    story.add_argument(
+        "--night",
+        action="store_true",
+        help="short night pillow note (story recap/draft)",
+    )
+    story.add_argument(
+        "--quiet",
+        action="store_true",
+        help="night/quiet TTS mode (shorter speech, no auto-play)",
+    )
+    story.add_argument(
+        "--memory-journal",
+        default=".bedagent/memory/journal.ndjson",
+        help="append story turns into the memory journal",
+    )
 
     voice = sub.add_parser("voice", help="DashScope ASR/TTS voice adapter (百炼语音)")
     voice.add_argument(
@@ -1370,6 +1461,11 @@ def parse_args() -> argparse.Namespace:
     voice.add_argument(
         "--output-json",
         help="optional path to write voice result JSON",
+    )
+    voice.add_argument(
+        "--quiet",
+        action="store_true",
+        help="night/quiet TTS mode (shorter speech)",
     )
 
     return parser.parse_args()
@@ -1415,6 +1511,15 @@ def main() -> int:
         )
         hits = semantic_memory_search(entries=entries, query=args.query, top_k=max(1, args.top_k))
         hits = apply_min_score(hits=hits, min_score=args.min_score)
+        if args.include_stories:
+            hits = unified_search(
+                query=args.query,
+                journal_path=Path(args.memory_journal),
+                story_root=Path(args.story_root),
+                top_k=max(1, args.top_k),
+                min_score=args.min_score,
+                memory_limit=max(1, args.limit),
+            )
         print("")
         print("=== bedagent memory semantic search ===")
         print(f"journal: {args.memory_journal}")
@@ -1438,6 +1543,37 @@ def main() -> int:
             detail = hit.get("detail", {})
             if args.explain and detail:
                 print(f"   detail: {json.dumps(detail, ensure_ascii=False)}")
+            if hit.get("source"):
+                print(f"   source: {hit['source']}")
+        return 0
+
+    if args.command == "search":
+        hits = unified_search(
+            query=args.query,
+            journal_path=Path(args.memory_journal),
+            story_root=Path(args.story_root),
+            top_k=max(1, args.top_k),
+            min_score=args.min_score,
+            memory_limit=max(1, args.limit),
+        )
+        print("")
+        print("=== bedagent unified search ===")
+        print(f"query: {args.query}")
+        print(f"returned: {len(hits)}")
+        for idx, hit in enumerate(hits, start=1):
+            entry = hit["entry"]
+            label = entry.get("run_id") or entry.get("story_id") or "-"
+            title = entry.get("title") or entry.get("pillow_note") or entry.get("main_thread") or ""
+            print(f"{idx}. source={hit['source']} score={hit['score']:.4f} id={label}")
+            print(f"   {title}")
+        if args.output_json:
+            output_path = Path(args.output_json)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps({"query": args.query, "hits": hits}, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            print(f"search_json: {output_path}")
         return 0
 
     if args.command == "worktree":
@@ -1575,13 +1711,14 @@ def main() -> int:
         if str(mvp_dir) not in sys.path:
             sys.path.insert(0, str(mvp_dir))
         from voice_adapter import (
+            apply_quiet_config,
             build_tts_summary,
             load_voice_config,
             synthesize_speech,
             transcribe_file,
         )
 
-        voice_config = load_voice_config(Path(args.voice_config))
+        voice_config = apply_quiet_config(load_voice_config(Path(args.voice_config)), quiet=args.quiet)
 
         if args.action == "transcribe":
             if not args.audio_file:
@@ -1648,21 +1785,26 @@ def main() -> int:
             sys.path.insert(0, str(mvp_dir))
         from story_session import (
             StoryPaths,
+            build_character_sheet,
+            build_night_pillow_note,
             build_story_drafts,
             build_story_recap,
             export_story,
+            latest_story_session,
             list_story_sessions,
             load_story_blanket_policy,
             load_story_state,
             print_story_recap,
             process_answer,
             process_fragment,
+            resolve_resume_story_id,
             resolve_story_paths,
             run_story_tell,
             run_story_voice_tell,
             search_stories,
         )
         from voice_adapter import (
+            apply_quiet_config,
             build_tts_summary,
             load_voice_config,
             persist_voice_turn_artifacts,
@@ -1673,7 +1815,11 @@ def main() -> int:
 
         story_root = Path(args.story_root)
         story_policy = load_story_blanket_policy(Path(args.blanket_policy))
-        voice_config = load_voice_config(Path(args.voice_config))
+        voice_config = apply_quiet_config(load_voice_config(Path(args.voice_config)), quiet=args.quiet)
+        memory_journal = Path(args.memory_journal)
+        resume_id = resolve_resume_story_id(story_root, args.story_id, args.resume or args.action == "resume")
+        if resume_id:
+            args.story_id = resume_id
 
         if args.action == "list":
             items = list_story_sessions(story_root)
@@ -1729,6 +1875,32 @@ def main() -> int:
                 print(f"search_json: {output_path}")
             return 0
 
+        if args.action == "resume":
+            latest = latest_story_session(story_root)
+            if not latest:
+                print("Input error: no story sessions to resume.")
+                return 2
+            paths = resolve_story_paths(story_root, latest["story_id"], None)
+            session, bible = load_story_state(paths, None)
+            recap = build_story_recap(bible, session)
+            print("")
+            print("=== bedagent story resume ===")
+            print(f"story_id: {latest['story_id']}")
+            if args.night:
+                print(build_night_pillow_note(bible, session))
+            else:
+                print_story_recap(recap)
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps({"story_id": latest["story_id"], "recap": recap}, indent=2, ensure_ascii=False)
+                    + "\n",
+                    encoding="utf-8",
+                )
+                print(f"resume_json: {output_path}")
+            return 0
+
         if args.action == "tell":
             seed = None
             if args.seed_file:
@@ -1742,6 +1914,7 @@ def main() -> int:
                 auto_confirm=args.auto_confirm,
                 non_interactive=args.non_interactive,
                 use_llm=args.use_llm,
+                memory_journal_path=memory_journal,
             )
             if args.output_json:
                 output_path = Path(args.output_json)
@@ -1771,8 +1944,10 @@ def main() -> int:
                     auto_confirm=args.auto_confirm,
                     non_interactive=args.non_interactive,
                     use_mic=args.mic,
-                    play_reply=args.play_reply,
+                    play_reply=args.play_reply and not args.quiet,
                     use_llm=args.use_llm,
+                    memory_journal_path=memory_journal,
+                    quiet=args.quiet,
                 )
             except Exception as exc:
                 print(f"Voice error: {exc}")
@@ -1794,7 +1969,12 @@ def main() -> int:
                 return 2
             session, bible = load_story_state(paths, args.title)
             recap = build_story_recap(bible, session)
-            print_story_recap(recap)
+            if args.night:
+                print("")
+                print("=== bedagent story night recap ===")
+                print(build_night_pillow_note(bible, session))
+            else:
+                print_story_recap(recap)
             if args.output_json:
                 output_path = Path(args.output_json)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1824,6 +2004,7 @@ def main() -> int:
                     auto_confirm=args.auto_confirm,
                     non_interactive=args.non_interactive,
                     use_llm=args.use_llm,
+                    memory_journal_path=memory_journal,
                 )
             except ValueError as exc:
                 print(f"Input error: {exc}")
@@ -1857,7 +2038,9 @@ def main() -> int:
                 answer = Path(args.answer_file).read_text(encoding="utf-8").strip()
             session, bible = load_story_state(paths, args.title)
             try:
-                result = process_answer(paths, answer or "", session, bible)
+                result = process_answer(
+                    paths, answer or "", session, bible, memory_journal_path=memory_journal
+                )
             except ValueError as exc:
                 print(f"Input error: {exc}")
                 return 2
@@ -1880,7 +2063,14 @@ def main() -> int:
                 print(f"Input error: story session not found at {paths.root}")
                 return 2
             session, bible = load_story_state(paths, args.title)
-            result = build_story_drafts(paths, bible, session)
+            result = build_story_drafts(
+                paths,
+                bible,
+                session,
+                expand=args.expand,
+                use_llm=args.use_llm,
+                night=args.night,
+            )
             print("")
             print("=== bedagent story draft ===")
             print(f"story_id: {paths.root.name}")
@@ -1888,6 +2078,8 @@ def main() -> int:
             print(f"outline: {result['outline_path']}")
             print(f"sketch: {result['chapter_sketch_path']}")
             print(f"pillow: {result['pillow_note_path']}")
+            if result.get("prose_path"):
+                print(f"prose: {result['prose_path']}")
             if args.output_json:
                 output_path = Path(args.output_json)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1913,6 +2105,25 @@ def main() -> int:
                 print(f"export_json: {output_path}")
             return 0
 
+        if args.action == "characters":
+            if not paths.root.exists():
+                print(f"Input error: story session not found at {paths.root}")
+                return 2
+            session, bible = load_story_state(paths, args.title)
+            sheet = build_character_sheet(bible)
+            print("")
+            print(sheet)
+            if args.output_json:
+                output_path = Path(args.output_json)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps({"story_id": paths.root.name, "characters": bible.get("characters", [])}, indent=2, ensure_ascii=False)
+                    + "\n",
+                    encoding="utf-8",
+                )
+                print(f"characters_json: {output_path}")
+            return 0
+
         if args.action == "voice-once":
             if not args.audio_file:
                 print("Input error: --audio-file is required for story voice-once.")
@@ -1932,6 +2143,9 @@ def main() -> int:
                     voice_config_path=Path(args.voice_config),
                     auto_confirm=args.auto_confirm,
                     non_interactive=args.non_interactive,
+                    use_llm=args.use_llm,
+                    memory_journal_path=memory_journal,
+                    quiet=args.quiet,
                 )
             except Exception as exc:
                 print(f"Voice error: {exc}")

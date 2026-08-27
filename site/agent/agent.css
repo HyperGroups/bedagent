@@ -358,6 +358,18 @@
   width: 1px;
 }
 
+.quiet-toggle {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.85rem;
+  gap: 0.4rem;
+}
+
+.quiet-toggle input {
+  accent-color: var(--blue);
+}
+
 @media (max-width: 960px) {
   .mode-grid,
   .console-layout {

@@ -18,6 +18,7 @@ def load_llm_config(path: Path | None = None) -> dict[str, Any]:
     payload.setdefault("model", "qwen-plus")
     payload.setdefault("timeout_seconds", 20)
     payload.setdefault("max_questions", 3)
+    payload.setdefault("max_expand_chars", 1800)
     payload.setdefault("enabled_by_default", False)
     return payload
 
@@ -165,3 +166,76 @@ def enhance_story_sage(
             "reason": f"fallback: {exc}",
         }
     return enhanced
+
+
+def simulate_chapter_expansion(bible: dict[str, Any], heuristic: str, max_chars: int = 1800) -> str:
+    main = str(bible.get("main_thread", "")).strip()
+    recap = str(bible.get("recent_recap") or main).strip()
+    extra = (
+        f"{recap}他没有立刻解释。日志灯闪了一下，像有人在另一头等一句口令。\n\n"
+        f"如果这一章只允许发生一件不可逆的事，那件事必须碰到主线：{main}\n\n"
+        "对白要短。动作要比解释先到。读者只需要看见谁先付出代价。"
+    )
+    merged = heuristic.rstrip() + "\n\n## 扩写正文\n\n" + extra
+    return merged[: max(200, max_chars)]
+
+
+def expand_story_chapter(
+    bible: dict[str, Any],
+    sketch: str,
+    heuristic: str,
+    config: dict[str, Any] | None = None,
+    explicit: bool | None = None,
+) -> dict[str, Any]:
+    config = config or load_llm_config()
+    status = llm_status(config, explicit=explicit)
+    max_chars = int(config.get("max_expand_chars", 1800))
+    payload = {
+        "text": heuristic,
+        "llm": {
+            "used": False,
+            "model": "heuristic",
+            "provider": "none",
+            "reason": "llm not requested",
+        },
+    }
+    if not status["usable"]:
+        if status["requested"] and not status["has_key"] and not status["simulate"]:
+            payload["llm"]["reason"] = "DASHSCOPE_API_KEY missing"
+        return payload
+
+    if status["simulate"]:
+        payload["text"] = simulate_chapter_expansion(bible, heuristic, max_chars)
+        payload["llm"] = {
+            "used": True,
+            "model": "simulated-qwen",
+            "provider": "simulated",
+            "reason": "BEDAGENT_LLM_SIMULATE",
+        }
+        return payload
+
+    prompt = (
+        "你是 bedagent 的 Hands 草稿员。根据故事 bible 和章节草图，写一段不超过 "
+        f"{max_chars} 字的章节扩写。不要改结局，不要引入新的世界观崩塌。只输出正文。\n"
+        f"主线：{bible.get('main_thread', '')}\n"
+        f"草图：{sketch}\n"
+        f"启发式扩写：{heuristic}"
+    )
+    try:
+        raw = call_dashscope_generation(prompt, config)
+        text = raw.strip() or heuristic
+        payload["text"] = text[:max_chars]
+        payload["llm"] = {
+            "used": True,
+            "model": config.get("model", "qwen-plus"),
+            "provider": "dashscope",
+            "reason": "generation",
+        }
+    except Exception as exc:  # pragma: no cover - network guardrail
+        payload["llm"] = {
+            "used": False,
+            "model": "heuristic",
+            "provider": "dashscope",
+            "reason": f"fallback: {exc}",
+        }
+    return payload

@@ -51,8 +51,12 @@ python3 mvp/bedagent_mvp.py story answer \
   --story-id <session-id> \
   --answer-file mvp/sample_story_answer.txt
 
-# 生成章节草图（Act 沙盒）
-python3 mvp/bedagent_mvp.py story draft --story-id <session-id>
+# 恢复最近一次会话
+python3 mvp/bedagent_mvp.py story resume
+python3 mvp/bedagent_mvp.py story tell --resume
+
+# 章节扩写（Draft Sandbox）
+python3 mvp/bedagent_mvp.py story draft --story-id <session-id> --expand
 
 # 导出 markdown 大纲 + 对话 transcript
 python3 mvp/bedagent_mvp.py story export --story-id <session-id>
@@ -90,7 +94,7 @@ python3 mvp/bedagent_mvp.py story list
 
 ## 为什么暂时不进主线
 
-当前 product milestone 仍是工程闭环 MVP（v0.8）。
+当前 product milestone 仍是工程闭环 MVP（v0.10）。
 story 模式作为 **平行情景适配器** 验证控制层可迁移性，不替代 sandbox-first 主线。
 
 ## 进入主线的条件
@@ -106,4 +110,6 @@ story 模式作为 **平行情景适配器** 验证控制层可迁移性，不�
 2. ~~章节 Act 沙盒：把 `expand` 线索落成 `drafts/chapter-N.md`~~ ✅ `story draft`
 3. ~~Blanket 策略：删人设 / 改主线等「红色」改动必须确认~~ ✅ `story_blanket_policy.json`
 4. embedding 检索：跨故事会话找相似伏笔。 ✅ `story search`（TF-IDF，v0.9）
-5. LLM 适配器：可选接入模型增强 Sage 追问与章节扩写（保持控制层不变）。 ✅ `--use-llm` / DashScope Qwen（v0.9，章节扩写仍为启发式草稿）
+5. LLM 适配器：可选接入模型增强 Sage 追问与章节扩写（保持控制层不变）。 ✅ `--use-llm` / DashScope Qwen（v0.9 追问，v0.10 `story draft --expand`）
+6. 会话恢复与记忆合流：`story resume`、口述写入 journal、`search` 统一检索。 ✅ v0.10
+7. 夜间短反馈：quiet TTS + night pillow。 ✅ v0.10

@@ -9,6 +9,8 @@
   "sample_rate": 16000,
   "mic_seconds": 8,
   "max_tts_chars": 220,
+  "quiet_mode": false,
+  "quiet_max_tts_chars": 72,
   "secret_block_keywords": [
     "api_key",
     "api key",
@@ -23,6 +25,11 @@
     "continue": ["继续", "接着说"],
     "cancel": ["取消", "算了"],
     "recap": ["汇报一下", "回顾一下", "recap"],
-    "quit": ["退出", "结束", "quit"]
+    "quit": ["退出", "结束", "quit"],
+    "draft": ["生成草稿", "写一章", "draft"],
+    "export": ["导出", "export"],
+    "expand": ["扩写", "展开这一章", "expand"],
+    "quiet": ["小声点", "夜间模式", "别出声"],
+    "characters": ["人物卡", "有谁"]
   }
 }
