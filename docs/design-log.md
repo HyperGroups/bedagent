@@ -520,3 +520,33 @@ product_milestone: v0.8.0-mvp
 - explain 校验仅针对 `policy_explain`；
 - worktree 过滤仅作用于 `list/retention-report`；
 - 检索仍为本地 TF-IDF，不引入外部检索服务。
+
+## ADR-0017：v0.9 可选 LLM Sage、故事检索、explain-diff 与 Web 持久化
+
+```yaml
+date: 2026-08-27
+design_version: D0.1
+status: accepted
+product_milestone: v0.9.0-mvp
+```
+
+### 决策
+
+在 v0.8 工程闭环与 story/voice/web 适配器之上推进：
+
+1. 可选 DashScope Qwen 增强 Sage 追问（`--use-llm` / `BEDAGENT_LLM=1`，默认启发式）；
+2. `story search` 跨会话检索主线/人物/口述（CJK-aware TF-IDF）；
+3. run manifest 增加顶层 `schema_version`；
+4. `explain-diff` 对比两次 run 的 policy_explain；
+5. Web API 将故事会话写入 `.bedagent/stories/`，并提供 list/search。
+
+### 原因
+
+“全面推进”需要把 bed 上的口述场景接到可检索、可对比、可持久的控制层，同时保持零依赖默认路径。
+
+### 边界
+
+- LLM 失败必须回退启发式，不得阻断闭环；
+- 故事检索仍是本地 lexical，不引入向量库；
+- GitHub Pages 静态站仍可离线用 localStorage；持久化需要本地 `bedagent_web.py`。
+

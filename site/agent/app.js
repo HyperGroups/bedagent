@@ -15,6 +15,7 @@ let apiBase = null;
 let mediaRecorder = null;
 let audioChunks = [];
 let recordedBlob = null;
+let remoteStoryId = localStorage.getItem("bedagent.story.id") || "";
 
 const els = {
   modeCards: document.querySelectorAll(".mode-card"),
@@ -34,6 +35,9 @@ const els = {
   bibleThreads: document.getElementById("bible-threads"),
   bibleQuestions: document.getElementById("bible-questions"),
   bibleTimeline: document.getElementById("bible-timeline"),
+  sessionPicker: document.getElementById("session-picker"),
+  storySearch: document.getElementById("story-search"),
+  searchHits: document.getElementById("search-hits"),
   apiStatus: document.getElementById("api-status"),
   apiStatusCard: document.getElementById("api-status-card"),
   apiBaseHint: document.getElementById("api-base-hint"),
@@ -143,9 +147,12 @@ async function detectApi() {
       const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) {
         apiBase = base;
-        els.apiStatus.textContent = `已连接 ${base}`;
+        const health = await res.json();
+        const llmNote = health.llm?.usable ? " · LLM 可用" : "";
+        els.apiStatus.textContent = `已连接 ${base}${llmNote}`;
         els.apiStatus.className = "api-status-value ok";
         els.apiBaseHint.textContent = `API: ${base}`;
+        await refreshRemoteSessions();
         return;
       }
     } catch {
@@ -157,10 +164,72 @@ async function detectApi() {
   els.apiStatus.className = "api-status-value fail";
 }
 
-function handleSendFragment() {
+async function refreshRemoteSessions() {
+  if (!apiBase || !els.sessionPicker) return;
+  try {
+    const res = await fetch(`${apiBase}/api/story/list`);
+    const data = await res.json();
+    const items = data.items || [];
+    els.sessionPicker.innerHTML = '<option value="">本机草稿</option>';
+    for (const item of items) {
+      const opt = document.createElement("option");
+      opt.value = item.story_id;
+      opt.textContent = `${item.title} (${item.turn_count} 回合)`;
+      if (item.story_id === remoteStoryId) opt.selected = true;
+      els.sessionPicker.appendChild(opt);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function loadRemoteStory(storyId) {
+  if (!apiBase || !storyId) return;
+  const res = await fetch(`${apiBase}/api/story/${encodeURIComponent(storyId)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "load story failed");
+  remoteStoryId = storyId;
+  localStorage.setItem("bedagent.story.id", storyId);
+  state.session = data.session;
+  state.session.turns = state.session.turns || [];
+  state.bible = data.bible;
+  persist();
+}
+
+async function handleSendFragment() {
   const text = els.fragmentInput.value.trim();
   if (!text) return;
   try {
+    if (apiBase) {
+      const res = await fetch(`${apiBase}/api/story/fragment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fragment: text,
+          title: state.bible.title,
+          story_id: remoteStoryId || undefined,
+          auto_confirm: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "story fragment failed");
+      remoteStoryId = data.story_id;
+      localStorage.setItem("bedagent.story.id", remoteStoryId);
+      state.session = data.session;
+      state.session.turns = state.session.turns || [];
+      if (data.agent_reply) {
+        state.session.turns.push({
+          kind: "fragment",
+          fragment: text,
+          agent_reply: data.agent_reply,
+        });
+      }
+      state.bible = data.bible;
+      els.fragmentInput.value = "";
+      persist();
+      refreshRemoteSessions();
+      return;
+    }
     const result = processFragment(state.session, state.bible, text, true);
     state.session = result.session;
     state.bible = result.bible;
@@ -171,15 +240,60 @@ function handleSendFragment() {
   }
 }
 
-function handleSendAnswer() {
+async function handleSendAnswer() {
   const text = els.fragmentInput.value.trim();
   if (!text) return;
   try {
+    if (apiBase && remoteStoryId) {
+      const res = await fetch(`${apiBase}/api/story/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer: text, story_id: remoteStoryId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "story answer failed");
+      state.session = data.session;
+      state.session.turns = state.session.turns || [];
+      state.session.turns.push({ kind: "answer", answer: text, agent_reply: data.agent_reply });
+      state.bible = data.bible;
+      els.fragmentInput.value = "";
+      persist();
+      return;
+    }
     const result = processAnswer(state.session, state.bible, text);
     state.session = result.session;
     state.bible = result.bible;
     els.fragmentInput.value = "";
     persist();
+  } catch (err) {
+    appendSystem(err.message || String(err));
+  }
+}
+
+async function handleStorySearch() {
+  const query = (els.storySearch?.value || "").trim();
+  if (!query || !els.searchHits) return;
+  els.searchHits.innerHTML = "";
+  if (!apiBase) {
+    appendSystem("故事检索需要本地 API");
+    return;
+  }
+  try {
+    const res = await fetch(`${apiBase}/api/story/search?q=${encodeURIComponent(query)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "search failed");
+    for (const hit of data.hits || []) {
+      const li = document.createElement("li");
+      li.textContent = `${hit.score.toFixed(2)} ${hit.entry.title}: ${hit.entry.main_thread}`;
+      li.style.cursor = "pointer";
+      li.addEventListener("click", () => loadRemoteStory(hit.entry.story_id).catch((err) => appendSystem(err.message)));
+      els.searchHits.appendChild(li);
+    }
+    if (!(data.hits || []).length) {
+      const li = document.createElement("li");
+      li.textContent = "没有匹配";
+      els.searchHits.appendChild(li);
+    }
   } catch (err) {
     appendSystem(err.message || String(err));
   }
@@ -277,8 +391,24 @@ function bindEvents() {
   document.getElementById("btn-new-session").addEventListener("click", () => {
     const title = prompt("故事标题", state.bible.title || "未命名故事");
     if (title === null) return;
+    remoteStoryId = "";
+    localStorage.removeItem("bedagent.story.id");
     state = resetSession(title || "未命名故事");
     persist();
+  });
+
+  els.sessionPicker?.addEventListener("change", () => {
+    const id = els.sessionPicker.value;
+    if (!id) return;
+    loadRemoteStory(id).catch((err) => appendSystem(err.message || String(err)));
+  });
+
+  document.getElementById("btn-story-search")?.addEventListener("click", handleStorySearch);
+  els.storySearch?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleStorySearch();
+    }
   });
 
   document.getElementById("btn-export-md").addEventListener("click", () => {

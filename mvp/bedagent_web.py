@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 MVP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = MVP_DIR.parent
 SITE_DIR = REPO_ROOT / "site"
+STORY_ROOT = REPO_ROOT / ".bedagent" / "stories"
 
 
 def ensure_mvp_path() -> None:
@@ -75,7 +76,11 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path == "/api/health":
+        path = parsed.path.rstrip("/") or "/"
+        if path == "/api/health":
+            ensure_mvp_path()
+            from llm_adapter import llm_status
+
             json_response(
                 self,
                 200,
@@ -84,11 +89,25 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                     "service": "bedagent_web",
                     "site_root": str(SITE_DIR),
                     "voice_available": bool(__import__("os").environ.get("DASHSCOPE_API_KEY")),
+                    "llm": llm_status(),
+                    "product_milestone": "v0.9.0-mvp",
                 },
             )
             return
-        if parsed.path == "/agent" or parsed.path == "/agent/":
+        if path in {"/agent", "/agent/"}:
             self.path = "/agent/index.html"
+            super().do_GET()
+            return
+        if path == "/api/story/list":
+            self.handle_story_list()
+            return
+        if path == "/api/story/search":
+            self.handle_story_search(parsed.query)
+            return
+        if path.startswith("/api/story/") and path.count("/") == 3:
+            story_id = path.split("/")[-1]
+            self.handle_story_get(story_id)
+            return
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802
@@ -103,6 +122,9 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/story/answer":
             self.handle_story_answer()
+            return
+        if parsed.path == "/api/story/search":
+            self.handle_story_search_post()
             return
         if parsed.path == "/api/voice/transcribe":
             self.handle_voice_transcribe()
@@ -147,8 +169,60 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
         except Exception as exc:  # pragma: no cover - API guardrail
             json_response(self, 500, {"error": str(exc)})
 
+    def handle_story_list(self) -> None:
+        ensure_mvp_path()
+        from story_session import list_story_sessions
+
+        items = list_story_sessions(STORY_ROOT)
+        json_response(self, 200, {"items": items})
+
+    def handle_story_get(self, story_id: str) -> None:
+        ensure_mvp_path()
+        from story_session import load_story_state, resolve_story_paths
+
+        paths = resolve_story_paths(STORY_ROOT, story_id, None)
+        if not paths.root.exists():
+            json_response(self, 404, {"error": f"story not found: {story_id}"})
+            return
+        session, bible = load_story_state(paths, None)
+        json_response(self, 200, {"story_id": story_id, "session": session, "bible": bible})
+
+    def handle_story_search(self, query_string: str) -> None:
+        ensure_mvp_path()
+        from urllib.parse import parse_qs
+
+        from story_session import search_stories
+
+        params = parse_qs(query_string)
+        query = (params.get("q") or params.get("query") or [""])[0]
+        if not query.strip():
+            json_response(self, 400, {"error": "q is required"})
+            return
+        hits = search_stories(STORY_ROOT, query, top_k=int((params.get("top_k") or ["3"])[0]))
+        json_response(self, 200, {"query": query, "hits": hits})
+
+    def handle_story_search_post(self) -> None:
+        ensure_mvp_path()
+        from story_session import search_stories
+
+        try:
+            payload = read_json_body(self)
+            query = str(payload.get("query") or payload.get("q") or "").strip()
+            if not query:
+                json_response(self, 400, {"error": "query is required"})
+                return
+            hits = search_stories(
+                STORY_ROOT,
+                query,
+                top_k=int(payload.get("top_k", 3)),
+                min_score=float(payload.get("min_score", 0.0)),
+            )
+            json_response(self, 200, {"query": query, "hits": hits})
+        except Exception as exc:
+            json_response(self, 500, {"error": str(exc)})
+
     def handle_story_fragment(self) -> None:
-        from story_session import default_session, empty_bible, process_fragment
+        from story_session import load_story_state, process_fragment, resolve_story_paths
 
         try:
             payload = read_json_body(self)
@@ -156,20 +230,25 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             if not fragment:
                 json_response(self, 400, {"error": "fragment is required"})
                 return
-            session = payload.get("session") or default_session()
-            bible = payload.get("bible") or empty_bible(session.get("title", "未命名故事"))
+            title = payload.get("title")
+            story_id = payload.get("story_id")
+            paths = resolve_story_paths(STORY_ROOT, story_id, title)
+            paths.root.mkdir(parents=True, exist_ok=True)
+            session, bible = load_story_state(paths, title)
             result = process_fragment(
-                paths=_temp_story_paths(),
-                fragment=fragment,
-                session=session,
-                bible=bible,
+                paths,
+                fragment,
+                session,
+                bible,
                 auto_confirm=bool(payload.get("auto_confirm", True)),
                 non_interactive=bool(payload.get("non_interactive", False)),
+                use_llm=bool(payload.get("use_llm", False)),
             )
             json_response(
                 self,
                 200,
                 {
+                    "story_id": paths.root.name,
                     "session": result["session"],
                     "bible": result["bible"],
                     "agent_reply": result["agent_reply"],
@@ -180,21 +259,34 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             json_response(self, 500, {"error": str(exc)})
 
     def handle_story_answer(self) -> None:
-        from story_session import process_answer
+        from story_session import load_story_state, process_answer, resolve_story_paths
 
         try:
             payload = read_json_body(self)
             answer = str(payload.get("answer", "")).strip()
-            session = payload.get("session")
-            bible = payload.get("bible")
-            if not answer or session is None or bible is None:
-                json_response(self, 400, {"error": "answer, session, bible are required"})
+            story_id = payload.get("story_id")
+            if not answer:
+                json_response(self, 400, {"error": "answer is required"})
                 return
-            result = process_answer(_temp_story_paths(), answer, session, bible)
+            if story_id:
+                paths = resolve_story_paths(STORY_ROOT, story_id, payload.get("title"))
+                if not paths.root.exists():
+                    json_response(self, 404, {"error": f"story not found: {story_id}"})
+                    return
+                session, bible = load_story_state(paths, payload.get("title"))
+            else:
+                session = payload.get("session")
+                bible = payload.get("bible")
+                if session is None or bible is None:
+                    json_response(self, 400, {"error": "story_id or session+bible required"})
+                    return
+                paths = _temp_story_paths()
+            result = process_answer(paths, answer, session, bible)
             json_response(
                 self,
                 200,
                 {
+                    "story_id": paths.root.name,
                     "session": result["session"],
                     "bible": result["bible"],
                     "agent_reply": result["agent_reply"],

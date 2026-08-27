@@ -565,6 +565,7 @@ def process_fragment(
     auto_confirm: bool = False,
     non_interactive: bool = False,
     input_fn: Callable[[str], str] = input,
+    use_llm: bool = False,
 ) -> dict[str, Any]:
     text = normalize_fragment(fragment)
     if not text:
@@ -573,6 +574,12 @@ def process_fragment(
     policy = policy or load_story_blanket_policy()
     bible = ensure_bible_schema(bible)
     sage = stage_story_sage(text, bible)
+    try:
+        from llm_adapter import enhance_story_sage
+
+        sage = enhance_story_sage(text, bible, sage, explicit=use_llm if use_llm else None)
+    except Exception:
+        sage["llm"] = {"used": False, "model": "heuristic", "provider": "none", "reason": "adapter unavailable"}
     focus = stage_story_focus(text, sage)
     risk = classify_story_blanket_risk(text, bible, sage["main_thread"], policy)
     blanket = stage_story_blanket(risk, policy)
@@ -916,6 +923,77 @@ def list_story_sessions(story_root: Path) -> list[dict[str, Any]]:
     return items
 
 
+def tokenize_story_text(value: str) -> list[str]:
+    from bedagent_mvp import tokenize_text
+
+    return tokenize_text(value)
+
+
+def collect_story_search_entries(story_root: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for item in list_story_sessions(story_root):
+        paths = StoryPaths(story_root / item["story_id"])
+        bible = load_json(paths.bible, {})
+        fragments: list[str] = []
+        if paths.fragments.exists():
+            for line in paths.fragments.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                fragments.append(str(payload.get("fragment", "")))
+        characters = [c.get("name", "") for c in bible.get("characters", [])]
+        entries.append(
+            {
+                "story_id": item["story_id"],
+                "title": item.get("title", ""),
+                "main_thread": bible.get("main_thread", item.get("main_thread", "")),
+                "recent_recap": bible.get("recent_recap", ""),
+                "characters": " ".join(name for name in characters if name),
+                "fragments": " ".join(fragments[-8:]),
+                "turn_count": item.get("turn_count", 0),
+            }
+        )
+    return entries
+
+
+def search_stories(
+    story_root: Path,
+    query: str,
+    top_k: int = 3,
+    min_score: float = 0.0,
+) -> list[dict[str, Any]]:
+    from bedagent_mvp import apply_min_score, compute_idf, cosine_similarity, vectorize
+
+    entries = collect_story_search_entries(story_root)
+    if not entries:
+        return []
+    field_weights = {
+        "title": 0.15,
+        "main_thread": 0.35,
+        "recent_recap": 0.15,
+        "characters": 0.1,
+        "fragments": 0.25,
+    }
+    query_tokens = tokenize_story_text(query)
+    docs = {field: [tokenize_story_text(str(entry.get(field, ""))) for entry in entries] for field in field_weights}
+    all_tokens = [query_tokens]
+    for field in field_weights:
+        all_tokens.extend(docs[field])
+    idf = compute_idf(all_tokens)
+    qvec = vectorize(query_tokens, idf)
+    ranked = []
+    for idx, entry in enumerate(entries):
+        score = 0.0
+        detail = {}
+        for field, weight in field_weights.items():
+            part = cosine_similarity(qvec, vectorize(docs[field][idx], idf))
+            detail[field] = round(part, 6)
+            score += weight * part
+        ranked.append({"score": round(score, 6), "entry": entry, "detail": detail})
+    ranked.sort(key=lambda item: item["score"], reverse=True)
+    return apply_min_score(ranked[: max(1, top_k)], min_score)
+
+
 def build_story_recap(bible: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
     return {
         "title": bible.get("title", session.get("title", "未命名故事")),
@@ -988,6 +1066,7 @@ def run_story_tell(
     non_interactive: bool = False,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
+    use_llm: bool = False,
 ) -> dict[str, Any]:
     paths = resolve_story_paths(story_root, story_id, title)
     paths.root.mkdir(parents=True, exist_ok=True)
@@ -1017,6 +1096,7 @@ def run_story_tell(
             auto_confirm=auto_confirm,
             non_interactive=non_interactive,
             input_fn=input_fn,
+            use_llm=use_llm,
         )
         session = result["session"]
         bible = result["bible"]
@@ -1127,6 +1207,7 @@ def run_voice_story_once(
     voice_config_path: Path | None = None,
     auto_confirm: bool = False,
     non_interactive: bool = False,
+    use_llm: bool = False,
 ) -> dict[str, Any]:
     """Voice closed loop: ASR (or simulated sidecar) -> Story -> TTS reply."""
     from voice_adapter import (
@@ -1150,6 +1231,7 @@ def run_voice_story_once(
         policy=policy,
         auto_confirm=auto_confirm,
         non_interactive=non_interactive,
+        use_llm=use_llm,
     )
 
     turn_no = result["turn"]["turn"]
@@ -1193,6 +1275,7 @@ def run_story_voice_tell(
     play_reply: bool = False,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
+    use_llm: bool = False,
 ) -> dict[str, Any]:
     from voice_adapter import (
         build_tts_summary,
@@ -1271,6 +1354,7 @@ def run_story_voice_tell(
             auto_confirm=auto_confirm,
             non_interactive=non_interactive,
             input_fn=input_fn,
+            use_llm=use_llm,
         )
         session = result["session"]
         bible = result["bible"]
@@ -1308,6 +1392,7 @@ def run_story_voice_tell(
             auto_confirm=auto_confirm,
             non_interactive=non_interactive,
             input_fn=input_fn,
+            use_llm=use_llm,
         )
         session = result["session"]
         bible = result["bible"]
