@@ -1584,8 +1584,8 @@ def run_story_voice_tell(
     output_fn(f"标题: {session['title']} | 回合: {session.get('turn_count', 0)}")
     output_fn(f"ASR: {voice_config['asr_model']} | TTS: {voice_config['tts_model']} / {voice_config['tts_voice']}")
     output_fn("提供音频文件路径，输入 mic 录音，或口述文本路径 fallback。")
-    output_fn("语音口令：暂停 / 继续 / 取消 / 汇报一下")
-    output_fn("命令: /text /answer /draft /export /recap /questions /help /quit")
+    output_fn("语音口令：暂停 / 继续 / 取消 / 汇报一下 / 扩写 / 夜间模式")
+    output_fn("命令: /text /answer /draft /expand /characters /export /recap /quiet /questions /help /quit")
     output_fn("")
 
     last_result: dict[str, Any] | None = None
