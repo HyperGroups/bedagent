@@ -214,8 +214,9 @@ python3 mvp/bedagent_mvp.py story voice-once \
   --auto-confirm
 
 python3 mvp/bedagent_mvp.py story voice --title "会做梦的维修AI" --mic --play-reply
-python3 mvp/bedagent_mvp.py story voice-once --resume --audio-file input.wav --quiet --auto-confirm --stream
-python3 mvp/bedagent_mvp.py voice transcribe --audio-file input.wav --stream
+python3 mvp/bedagent_mvp.py story voice-once --resume --audio-file input.wav --quiet --auto-confirm --stream --vad
+python3 mvp/bedagent_mvp.py voice transcribe --audio-file input.wav --stream --vad
+python3 mvp/bedagent_mvp.py voice speak --text "收到。继续讲。" --stream
 python3 mvp/bedagent_mvp.py voice status
 python3 mvp/bedagent_mvp.py voice recap --resume
 ```
@@ -260,7 +261,7 @@ python3 mvp/bedagent_web.py --port 8765
 - `validate-explain` subcommand: validates `policy_explain` schema and required fields.
 - `explain-diff` subcommand: diffs `policy_explain` between two manifests.
 - `story` subcommand: oral storytelling loop (`tell`, `voice`, `voice-once`, `once`, `recap`, `answer`, `draft`, `export`, `list`, `search`, `resume`, `characters`) with bible, blanket, draft sandbox, DashScope voice, optional Qwen Sage, chapter expansion, and memory journal sync.
-- `voice` subcommand: DashScope ASR/TTS (`transcribe`, `speak`, `status`, `recap`); `--stream` emits ASR partials; `--quiet` / `BEDAGENT_TTS_QUIET=1` shortens night TTS.
+- `voice` subcommand: DashScope / local ASR-TTS (`transcribe`, `speak`, `status`, `recap`); `--stream` emits ASR partials or sentence TTS; `--vad` splits utterances; `--quiet` / `BEDAGENT_TTS_QUIET=1` shortens night TTS.
 - `search` subcommand: unified TF-IDF search across memory journal and story sessions.
 - `--use-llm` / `BEDAGENT_LLM=1`: optional DashScope Qwen enhancement (`BEDAGENT_LLM_SIMULATE=1` for offline), including `story draft --expand`.
 

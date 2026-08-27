@@ -611,3 +611,33 @@ product_milestone: v0.11.0-mvp
 - DashScope 实时流失败回退到文件 ASR + 合成 partials；
 - GitHub Pages 仍需本地 `bedagent_web.py` 才能真转写。
 
+## ADR-0020：v0.12 VAD 分轮、本地语音回退与句子 TTS
+
+```yaml
+date: 2026-08-27
+design_version: D0.1
+status: accepted
+product_milestone: v0.12.0-mvp
+```
+
+### 决策
+
+把床边语音从「按住说一整段」推进成可分段、可离线回退的控制层：
+
+1. 能量 VAD 把长录音切成多轮口述（`transcribe_vad` / `--vad`），每轮单独走 Sage → bible；
+2. `provider: auto`：无百炼 Key 时走 sidecar / 本地 Whisper，TTS 可走 Piper；
+3. 句子级 TTS（`--tts-stream`）按标点切 wav，便于短反馈和打断；
+4. 语音回合写入 memory journal（`kind=voice`）；
+5. Web 增加静音自动停与自动分轮勾选，减少松手操作。
+
+### 原因
+
+「全面推进包括语音功能」要让躺着说话更接近持续对话：一段里的停顿变成自然分轮，云端不可用时仍能用本地/模拟跑通闭环。
+
+### 边界
+
+- 浏览器仍不是持续开麦；自动停只作用于当前这一次按住说话；
+- VAD 是 PCM 能量门，不是神经网络 VAD；
+- Whisper / Piper 为可选二进制，测试默认 sidecar + `BEDAGENT_TTS_SIMULATE`；
+- GitHub Pages 仍需本地 `bedagent_web.py`。
+

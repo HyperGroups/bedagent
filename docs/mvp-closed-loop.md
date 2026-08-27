@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.11.0-mvp (prototype)
-Status: implemented (streaming ASR partials, voice story closed-loop API, silence gate, hold-to-talk web)
+Product Milestone: v0.12.0-mvp (prototype)
+Status: implemented (VAD utterance split, local voice fallback, sentence TTS, silence auto-stop web)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -109,6 +109,16 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    `voice status` and `voice recap` (speak night pillow of latest session).
 36. **Hold-to-talk Web**  
    Agent voice mode: press-and-release recording, barge-in stops TTS, optional auto closed-loop.
+37. **VAD utterance split**  
+   Energy-based VAD splits a long recording into turns (`voice transcribe --vad`, `story voice-once --vad`).
+38. **Sentence TTS**  
+   `voice speak --stream` / `--tts-stream` synthesizes one wav per sentence.
+39. **Local voice fallback**  
+   `provider: auto` can use sidecar / Whisper / Piper when DashScope is unavailable.
+40. **Voice memory**  
+   Voice turns append `kind=voice` to the memory journal.
+41. **Web silence auto-stop**  
+   Agent voice mode can stop recording after ~1.2s of post-speech silence.
 
 ## Output contract
 
@@ -174,15 +184,16 @@ python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blank
 
 ## Current limitations
 
-- Speech exists as an optional DashScope adapter; GitHub Pages still needs local API for ASR/TTS.
+- Speech exists as an optional DashScope adapter with local Whisper/Piper fallback; GitHub Pages still needs local API for ASR/TTS.
 - Sage reasoning is heuristic by default; DashScope Qwen is opt-in (`--use-llm` / `BEDAGENT_LLM=1`).
 - Chapter expansion stays in the draft sandbox; it does not rewrite the bible without a later oral turn.
 - No container executor yet; live execution currently focuses on git worktree path.
 - Memory retrieval is weighted lexical-semantic (TF-IDF, CJK-aware) with pre-filters; no embedding/rerank pipeline yet.
+- Browser VAD auto-stop is energy-based, not a continuous open-mic session.
 
 ## Next implementation steps
 
 1. Add embedding-backed retrieval and rerank for memory/story search.
 2. Add scheduled/automatic retention enforcement using existing report/export path.
 3. Add container/VM adapters behind the same side-effect gate.
-4. Add continuous microphone VAD that auto-segments turns without a hold button.
+4. Add continuous open-mic VAD that keeps the mic open across turns without a hold button.

@@ -1440,6 +1440,16 @@ def parse_args() -> argparse.Namespace:
         help="print ASR partials during story voice-once",
     )
     story.add_argument(
+        "--vad",
+        action="store_true",
+        help="split story voice-once audio into VAD utterances",
+    )
+    story.add_argument(
+        "--tts-stream",
+        action="store_true",
+        help="synthesize TTS sentence-by-sentence for story voice-once",
+    )
+    story.add_argument(
         "--memory-journal",
         default=".bedagent/memory/journal.ndjson",
         help="append story turns into the memory journal",
@@ -1475,7 +1485,12 @@ def parse_args() -> argparse.Namespace:
     voice.add_argument(
         "--stream",
         action="store_true",
-        help="emit growing ASR partials while transcribing",
+        help="emit growing ASR partials while transcribing, or sentence TTS while speaking",
+    )
+    voice.add_argument(
+        "--vad",
+        action="store_true",
+        help="split transcribe audio into VAD utterances",
     )
     voice.add_argument(
         "--story-root",
@@ -1734,8 +1749,10 @@ def main() -> int:
             build_tts_summary,
             load_voice_config,
             synthesize_speech,
+            synthesize_speech_stream,
             transcribe_file,
             transcribe_stream,
+            transcribe_vad,
             voice_status,
         )
 
@@ -1804,6 +1821,36 @@ def main() -> int:
                 print("Input error: --audio-file is required for voice transcribe.")
                 return 2
             try:
+                if args.vad:
+                    vad = transcribe_vad(Path(args.audio_file), config=voice_config)
+                    print("")
+                    print("=== bedagent voice transcribe vad ===")
+                    print(f"model: {vad.model}")
+                    print(f"segments: {len(vad.segments)}")
+                    print(f"skipped: {vad.skipped} {vad.skip_reason}".strip())
+                    for segment in vad.segments:
+                        print(f"  [seg {segment.index}] {segment.start_ms}-{segment.end_ms}ms energy={segment.energy}")
+                    for item in vad.utterances:
+                        marker = "skip" if item.skipped else "utt"
+                        print(f"  [{marker}] {item.text}")
+                    print(f"text: {vad.text}")
+                    if args.output_json:
+                        output_path = Path(args.output_json)
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        payload = {
+                            "text": vad.text,
+                            "model": vad.model,
+                            "skipped": vad.skipped,
+                            "skip_reason": vad.skip_reason,
+                            "segments": [segment.__dict__ for segment in vad.segments],
+                            "utterances": [item.__dict__ for item in vad.utterances],
+                        }
+                        output_path.write_text(
+                            json.dumps(payload, indent=2, ensure_ascii=False, default=str) + "\n",
+                            encoding="utf-8",
+                        )
+                        print(f"transcribe_json: {output_path}")
+                    return 0
                 if args.stream:
                     stream = transcribe_stream(Path(args.audio_file), config=voice_config)
                     print("")
@@ -1852,6 +1899,33 @@ def main() -> int:
             output = Path(args.output or ".bedagent/voice/reply.wav")
             try:
                 summary = build_tts_summary(text or "", voice_config)
+                if args.stream:
+                    spoken = synthesize_speech_stream(summary, output.parent / "sentences", config=voice_config)
+                    print("")
+                    print("=== bedagent voice speak stream ===")
+                    print(f"model: {spoken.model}")
+                    print(f"sentences: {len(spoken.sentences)}")
+                    for item in spoken.sentences:
+                        print(f"  {item.text} -> {item.output_path}")
+                    if args.output_json:
+                        output_path = Path(args.output_json)
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        output_path.write_text(
+                            json.dumps(
+                                {
+                                    "text": spoken.text,
+                                    "model": spoken.model,
+                                    "output_paths": spoken.output_paths,
+                                    "sentences": [item.__dict__ for item in spoken.sentences],
+                                },
+                                indent=2,
+                                ensure_ascii=False,
+                            )
+                            + "\n",
+                            encoding="utf-8",
+                        )
+                        print(f"speak_json: {output_path}")
+                    return 0
                 result = synthesize_speech(summary, output, config=voice_config)
             except Exception as exc:
                 print(f"Voice error: {exc}")
@@ -2244,6 +2318,8 @@ def main() -> int:
                     use_llm=args.use_llm,
                     memory_journal_path=memory_journal,
                     quiet=args.quiet,
+                    vad=args.vad,
+                    tts_stream=args.tts_stream,
                 )
             except Exception as exc:
                 print(f"Voice error: {exc}")
@@ -2254,6 +2330,9 @@ def main() -> int:
             print(f"asr_model: {payload.get('asr_model', '-')}")
             if payload.get("skipped"):
                 print(f"skipped: {payload.get('skip_reason', True)}")
+            if payload.get("vad"):
+                print(f"vad_segments: {len(payload.get('segments') or [])}")
+                print(f"vad_turns: {len(payload.get('turns') or [])}")
             if args.stream:
                 for item in payload.get("partials") or []:
                     marker = "final" if item.get("is_final") else "partial"

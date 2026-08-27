@@ -89,7 +89,7 @@ class VoiceWebV11Tests(unittest.TestCase):
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/voice/status", timeout=3) as resp:
                 status = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(status["ok"])
-            self.assertEqual(PRODUCT_MILESTONE, "v0.11.0-mvp")
+            self.assertEqual(PRODUCT_MILESTONE, "v0.12.0-mvp")
 
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as resp:
                 health = json.loads(resp.read().decode("utf-8"))

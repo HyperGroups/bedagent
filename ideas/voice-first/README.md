@@ -17,7 +17,7 @@ bedagent 的 Voice 层现已接入 **阿里云 DashScope 百炼**，并提供 **
 |------|------|
 | 躺床写故事 | 浏览器内 Story 引擎 + localStorage |
 | MVP 闭环 | 需本地 API |
-| 语音口述 | 浏览器录音 + DashScope ASR（需本地 API + API Key） |
+| 语音口述 | 浏览器录音 + ASR（需本地 API；可选 DashScope / 本地 Whisper） |
 
 访问：
 
@@ -47,8 +47,9 @@ export DASHSCOPE_WORKSPACE_ID="ws-..."
 独立语音命令：
 
 ```bash
-python3 mvp/bedagent_mvp.py voice transcribe --audio-file input.wav
-python3 mvp/bedagent_mvp.py voice speak --text "收到，继续讲。" --output reply.wav
+python3 mvp/bedagent_mvp.py voice transcribe --audio-file input.wav --stream --vad
+python3 mvp/bedagent_mvp.py voice speak --text "收到，继续讲。主线已对齐。" --stream --output reply.wav
+python3 mvp/bedagent_mvp.py voice status
 ```
 
 Story 语音口述：
@@ -58,7 +59,9 @@ Story 语音口述：
 python3 mvp/bedagent_mvp.py story voice-once \
   --title "会做梦的维修AI" \
   --audio-file input.wav \
-  --auto-confirm
+  --auto-confirm \
+  --vad \
+  --tts-stream
 
 # 交互语音循环（音频路径 / mic / /text fallback）
 python3 mvp/bedagent_mvp.py story voice \
@@ -87,5 +90,6 @@ python3 mvp/bedagent_mvp.py story voice \
 1. 双向流式 ASR（麦克风边说边转写）； ✅ `transcribe_stream` + Web 闭环（v0.11，仍为按住说话，非持续开麦）
 2. Qwen 文本模型接入 Sage 追问（仍走 Blanket）； ✅ `--use-llm`
 3. 床边手机/Web 推送音频入口； ✅ `/api/voice/story` + 按住说话
-4. 离线 fallback（本地 Whisper + Piper）。
-5. 持续开麦 VAD 自动分轮。
+4. 离线 fallback（本地 Whisper + Piper）。 ✅ `provider: auto` / `BEDAGENT_WHISPER_CMD` / `BEDAGENT_PIPER_CMD`（v0.12）
+5. 录音内 VAD 自动分轮。 ✅ `--vad` / Web 自动分轮（v0.12）
+6. 持续开麦：麦克风保持开启、跨轮自动切段。

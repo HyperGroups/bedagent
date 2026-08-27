@@ -618,6 +618,33 @@ def append_story_memory(
     return result
 
 
+def append_voice_memory(
+    journal_path: Path | None,
+    paths: StoryPaths,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    if journal_path is None:
+        return None
+    from bedagent_mvp import append_memory_entry
+
+    bible = payload.get("bible") or {}
+    entry = {
+        "recorded_at": now_iso(),
+        "run_id": f"voice:{paths.root.name}:turn:{int((payload.get('result') or {}).get('turn', {}).get('turn') or 0)}",
+        "kind": "voice",
+        "story_id": paths.root.name,
+        "title": bible.get("title", ""),
+        "idea": payload.get("transcript") or payload.get("skip_reason") or "",
+        "risk_level": "green",
+        "act_status": "skipped" if payload.get("skipped") else "applied",
+        "pillow_note": first_sentence(payload.get("agent_reply") or payload.get("skip_reason") or "", max_len=100),
+        "asr_model": payload.get("asr_model", ""),
+    }
+    result = append_memory_entry(journal_path=journal_path, entry=entry)
+    result["entry"] = entry
+    return result
+
+
 def load_story_state(paths: StoryPaths, title: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
     session = load_json(paths.session, default_session(title or "未命名故事"))
     bible = ensure_bible_schema(load_json(paths.bible, empty_bible(session.get("title", title or "未命名故事"))))
@@ -1471,37 +1498,31 @@ def run_story_tell(
     return recap
 
 
-def run_voice_story_once(
+def _complete_voice_story_turn(
     paths: StoryPaths,
     audio_path: Path,
+    stream: Any,
     session: dict[str, Any],
     bible: dict[str, Any],
-    policy: dict[str, Any] | None = None,
-    voice_config: dict[str, Any] | None = None,
-    voice_config_path: Path | None = None,
-    auto_confirm: bool = False,
-    non_interactive: bool = False,
-    use_llm: bool = False,
-    memory_journal_path: Path | None = None,
-    quiet: bool = False,
+    policy: dict[str, Any],
+    voice_config: dict[str, Any],
+    auto_confirm: bool,
+    non_interactive: bool,
+    use_llm: bool,
+    memory_journal_path: Path | None,
+    tts_stream: bool = False,
+    vad_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Voice closed loop: ASR (or simulated sidecar) -> Story -> TTS reply."""
     from voice_adapter import (
-        apply_quiet_config,
         build_tts_summary,
-        load_voice_config,
         persist_voice_turn_artifacts,
         synthesize_speech,
-        transcribe_stream,
+        synthesize_speech_stream,
         voice_turn_paths,
     )
 
-    policy = policy or load_story_blanket_policy()
-    voice_config = apply_quiet_config(voice_config or load_voice_config(voice_config_path), quiet=quiet)
-
-    stream = transcribe_stream(audio_path, config=voice_config, config_path=voice_config_path, stream=True)
     if stream.skipped and stream.skip_reason == "silence":
-        return {
+        payload = {
             "story_id": paths.root.name,
             "transcript": "",
             "asr_model": stream.model,
@@ -1515,8 +1536,10 @@ def run_voice_story_once(
             "quiet": bool(voice_config.get("quiet_mode")),
             "silence_ratio": stream.silence_ratio,
         }
+        payload["memory"] = append_voice_memory(memory_journal_path, paths, payload)
+        return payload
     if stream.command:
-        return {
+        payload = {
             "story_id": paths.root.name,
             "transcript": stream.text,
             "asr_model": stream.model,
@@ -1530,6 +1553,8 @@ def run_voice_story_once(
             "bible": bible,
             "quiet": bool(voice_config.get("quiet_mode")),
         }
+        payload["memory"] = append_voice_memory(memory_journal_path, paths, payload)
+        return payload
 
     result = process_fragment(
         paths,
@@ -1545,17 +1570,36 @@ def run_voice_story_once(
 
     turn_no = result["turn"]["turn"]
     artifacts = voice_turn_paths(paths.voice, turn_no)
+    tts_text = build_tts_summary(result["agent_reply"], voice_config)
+    sentences: list[dict[str, Any]] | None = None
+    if tts_stream:
+        spoken = synthesize_speech_stream(
+            tts_text,
+            artifacts["reply_audio"].parent / f"turn-{turn_no:03d}-sentences",
+            config=voice_config,
+            stem=f"turn-{turn_no:03d}",
+        )
+        artifacts["reply_audio"].write_bytes(Path(spoken.output_paths[-1]).read_bytes())
+        speak_model = spoken.model
+        speak_path = spoken.output_paths[-1]
+        speak_text = spoken.text
+        sentences = [{"text": item.text, "output_path": item.output_path} for item in spoken.sentences]
+    else:
+        speak = synthesize_speech(tts_text, artifacts["reply_audio"], config=voice_config)
+        speak_model = speak.model
+        speak_path = speak.output_path
+        speak_text = speak.text
+
     persist_voice_turn_artifacts(
         artifacts,
         transcript=stream.text,
         agent_reply=result["agent_reply"],
         input_audio=audio_path,
         partials=stream.partials,
+        vad=vad_meta,
+        sentences=sentences,
     )
-    tts_text = build_tts_summary(result["agent_reply"], voice_config)
-    speak = synthesize_speech(tts_text, artifacts["reply_audio"], config=voice_config)
-
-    return {
+    payload = {
         "story_id": paths.root.name,
         "transcript": stream.text,
         "asr_model": stream.model,
@@ -1564,15 +1608,127 @@ def run_voice_story_once(
         "skipped": False,
         "partials": stream.partials,
         "agent_reply": result["agent_reply"],
-        "tts_model": speak.model,
-        "reply_audio": speak.output_path,
-        "reply_text": speak.text,
+        "tts_model": speak_model,
+        "reply_audio": speak_path,
+        "reply_text": speak_text,
+        "tts_sentences": sentences or [],
         "artifacts": {key: str(value) for key, value in artifacts.items()},
         "session": result["session"],
         "bible": result["bible"],
         "quiet": bool(voice_config.get("quiet_mode")),
         "silence_ratio": stream.silence_ratio,
     }
+    payload["memory"] = append_voice_memory(memory_journal_path, paths, payload)
+    return payload
+
+
+def run_voice_story_once(
+    paths: StoryPaths,
+    audio_path: Path,
+    session: dict[str, Any],
+    bible: dict[str, Any],
+    policy: dict[str, Any] | None = None,
+    voice_config: dict[str, Any] | None = None,
+    voice_config_path: Path | None = None,
+    auto_confirm: bool = False,
+    non_interactive: bool = False,
+    use_llm: bool = False,
+    memory_journal_path: Path | None = None,
+    quiet: bool = False,
+    vad: bool = False,
+    tts_stream: bool = False,
+) -> dict[str, Any]:
+    """Voice closed loop: ASR (or simulated sidecar) -> Story -> TTS reply."""
+    from voice_adapter import (
+        apply_quiet_config,
+        load_voice_config,
+        transcribe_stream,
+        transcribe_vad,
+    )
+
+    policy = policy or load_story_blanket_policy()
+    voice_config = apply_quiet_config(voice_config or load_voice_config(voice_config_path), quiet=quiet)
+
+    if vad:
+        vad_result = transcribe_vad(
+            audio_path,
+            config=voice_config,
+            config_path=voice_config_path,
+            output_dir=paths.voice / "vad",
+        )
+        vad_meta = {
+            "segment_count": len(vad_result.segments),
+            "segments": [
+                {
+                    "index": item.index,
+                    "start_ms": item.start_ms,
+                    "end_ms": item.end_ms,
+                    "energy": item.energy,
+                    "path": item.path,
+                }
+                for item in vad_result.segments
+            ],
+        }
+        turns: list[dict[str, Any]] = []
+        current_session, current_bible = session, bible
+        for utterance in vad_result.utterances:
+            turn = _complete_voice_story_turn(
+                paths,
+                Path(utterance.audio_path),
+                utterance,
+                current_session,
+                current_bible,
+                policy=policy,
+                voice_config=voice_config,
+                auto_confirm=auto_confirm,
+                non_interactive=non_interactive,
+                use_llm=use_llm,
+                memory_journal_path=memory_journal_path,
+                tts_stream=tts_stream,
+                vad_meta=vad_meta,
+            )
+            current_session = turn["session"]
+            current_bible = turn["bible"]
+            turns.append(turn)
+        last = turns[-1] if turns else {
+            "story_id": paths.root.name,
+            "transcript": "",
+            "applied": False,
+            "skipped": True,
+            "skip_reason": vad_result.skip_reason or "silence",
+            "agent_reply": "（静音，本轮未写入 bible）",
+            "session": session,
+            "bible": bible,
+            "quiet": bool(voice_config.get("quiet_mode")),
+        }
+        last = dict(last)
+        last["turns"] = turns
+        last["vad"] = True
+        last["segments"] = vad_meta["segments"]
+        last["transcript"] = vad_result.text or last.get("transcript", "")
+        last["asr_model"] = vad_result.model
+        last["silence_ratio"] = vad_result.silence_ratio
+        last["applied"] = any(item.get("applied") for item in turns)
+        last["skipped"] = not last["applied"] and (vad_result.skipped or all(item.get("skipped") for item in turns))
+        if last["skipped"] and not last.get("skip_reason"):
+            last["skip_reason"] = vad_result.skip_reason or "silence"
+        return last
+
+    stream = transcribe_stream(audio_path, config=voice_config, config_path=voice_config_path, stream=True)
+    return _complete_voice_story_turn(
+        paths,
+        audio_path,
+        stream,
+        session,
+        bible,
+        policy=policy,
+        voice_config=voice_config,
+        auto_confirm=auto_confirm,
+        non_interactive=non_interactive,
+        use_llm=use_llm,
+        memory_journal_path=memory_journal_path,
+        tts_stream=tts_stream,
+    )
 
 
 def run_story_voice_tell(

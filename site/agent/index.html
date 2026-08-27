@@ -55,7 +55,7 @@
           <button class="mode-card" type="button" data-mode="voice" role="tab" aria-selected="false">
             <span class="mode-icon">🎙️</span>
             <h3>语音口述</h3>
-            <p>DashScope ASR/TTS · 需本地 bedagent_web 服务</p>
+            <p>DashScope / 本地 Whisper · 静音自动停 · VAD 分轮</p>
             <span class="mode-tag">百炼 · 可选</span>
           </button>
         </div>
@@ -113,7 +113,7 @@
             </div>
 
             <div id="voice-controls" class="input-area hidden">
-              <p class="hint">按住说话，松手即转写并进入 Story。本地 API + 模拟 sidecar 也可闭环。</p>
+              <p class="hint">按住说话；勾选静音自动停后，说完停顿即结束。松手进入 Story 闭环。</p>
               <div class="voice-row">
                 <button class="button primary" type="button" id="btn-record">🎙 按住说话</button>
                 <span id="record-status" class="record-status">就绪</span>
@@ -121,6 +121,14 @@
               <label class="quiet-toggle">
                 <input type="checkbox" id="chk-voice-loop" checked />
                 说完即闭环（ASR → Sage → TTS）
+              </label>
+              <label class="quiet-toggle">
+                <input type="checkbox" id="chk-auto-stop" checked />
+                静音自动停
+              </label>
+              <label class="quiet-toggle">
+                <input type="checkbox" id="chk-vad" checked />
+                自动分轮（VAD）
               </label>
               <audio id="playback" controls class="hidden"></audio>
               <div id="voice-partials" class="voice-partials" aria-live="polite"></div>

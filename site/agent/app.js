@@ -18,6 +18,9 @@ let mediaRecorder = null;
 let audioChunks = [];
 let recordedBlob = null;
 let remoteStoryId = localStorage.getItem("bedagent.story.id") || "";
+let recordAnalyser = null;
+let recordContext = null;
+let autoStopRaf = 0;
 
 const els = {
   modeCards: document.querySelectorAll(".mode-card"),
@@ -159,7 +162,7 @@ async function detectApi() {
         const health = await res.json();
         const llmNote = health.llm?.usable ? " · LLM 可用" : "";
         const quietNote = quietEnabled() ? " · 夜间" : "";
-        els.apiStatus.textContent = `已连接 ${base} · ${health.product_milestone || "v0.10"}${llmNote}${quietNote}`;
+        els.apiStatus.textContent = `已连接 ${base} · ${health.product_milestone || "v0.12"}${llmNote}${quietNote}`;
         els.apiStatus.className = "api-status-value ok";
         els.apiBaseHint.textContent = `API: ${base}`;
         await refreshRemoteSessions();
@@ -361,6 +364,72 @@ function voiceLoopEnabled() {
   return document.getElementById("chk-voice-loop")?.checked !== false;
 }
 
+function autoStopEnabled() {
+  return document.getElementById("chk-auto-stop")?.checked !== false;
+}
+
+function vadEnabled() {
+  return document.getElementById("chk-vad")?.checked !== false;
+}
+
+function stopRecordMeter() {
+  if (autoStopRaf) {
+    cancelAnimationFrame(autoStopRaf);
+    autoStopRaf = 0;
+  }
+  try {
+    recordContext?.close();
+  } catch {
+    /* ignore */
+  }
+  recordContext = null;
+  recordAnalyser = null;
+}
+
+function startSilenceWatch(stream) {
+  if (!autoStopEnabled() || !window.AudioContext) return;
+  try {
+    recordContext = new AudioContext();
+    const source = recordContext.createMediaStreamSource(stream);
+    recordAnalyser = recordContext.createAnalyser();
+    recordAnalyser.fftSize = 2048;
+    source.connect(recordAnalyser);
+    const data = new Uint8Array(recordAnalyser.fftSize);
+    let heardSpeech = false;
+    let silentMs = 0;
+    let last = performance.now();
+    const tick = () => {
+      if (mediaRecorder?.state !== "recording") return;
+      recordAnalyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (const value of data) {
+        const n = (value - 128) / 128;
+        sum += n * n;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      const now = performance.now();
+      const dt = now - last;
+      last = now;
+      if (rms > 0.045) {
+        heardSpeech = true;
+        silentMs = 0;
+        els.recordStatus.textContent = "录音中… 检测到语音";
+      } else if (heardSpeech) {
+        silentMs += dt;
+        els.recordStatus.textContent = `录音中… 静音 ${Math.round(silentMs)}ms`;
+        if (silentMs > 1200) {
+          mediaRecorder.stop();
+          return;
+        }
+      }
+      autoStopRaf = requestAnimationFrame(tick);
+    };
+    autoStopRaf = requestAnimationFrame(tick);
+  } catch {
+    /* analyser optional */
+  }
+}
+
 async function startRecording() {
   if (!navigator.mediaDevices?.getUserMedia) {
     els.recordStatus.textContent = "浏览器不支持录音";
@@ -376,6 +445,7 @@ async function startRecording() {
   mediaRecorder = new MediaRecorder(stream);
   mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
   mediaRecorder.onstop = () => {
+    stopRecordMeter();
     recordedBlob = new Blob(audioChunks, { type: "audio/webm" });
     els.playback.src = URL.createObjectURL(recordedBlob);
     els.playback.classList.remove("hidden");
@@ -387,7 +457,10 @@ async function startRecording() {
     }
   };
   mediaRecorder.start();
-  els.recordStatus.textContent = "录音中… 松开或再次点击停止";
+  startSilenceWatch(stream);
+  els.recordStatus.textContent = autoStopEnabled()
+    ? "录音中… 说完停顿即自动停止"
+    : "录音中… 松开或再次点击停止";
   els.recordStatus.classList.add("recording");
 }
 
@@ -408,10 +481,14 @@ async function handleVoiceClosedLoop() {
   form.append("quiet", quietEnabled() ? "1" : "0");
   form.append("auto_confirm", "1");
   form.append("include_audio", "1");
+  form.append("vad", vadEnabled() ? "1" : "0");
   const res = await fetch(`${apiBase}/api/voice/story`, { method: "POST", body: form });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "voice story failed");
   showPartials(data.partials || []);
+  if ((data.turns || []).length > 1) {
+    appendSystem(`VAD 分成 ${data.turns.length} 轮口述`);
+  }
   if (data.skipped) {
     appendSystem(`已跳过：${data.skip_reason || data.command || "silence"}`);
     if (data.command === "/recap" || data.command === "/resume") {
@@ -461,6 +538,7 @@ async function handleVoiceTranscribe() {
   const form = new FormData();
   form.append("audio", recordedBlob, "recording.webm");
   form.append("stream", "1");
+  form.append("vad", vadEnabled() ? "1" : "0");
   try {
     const res = await fetch(`${apiBase}/api/voice/transcribe`, { method: "POST", body: form });
     const data = await res.json();

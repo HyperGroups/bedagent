@@ -22,7 +22,7 @@ REPO_ROOT = MVP_DIR.parent
 SITE_DIR = REPO_ROOT / "site"
 STORY_ROOT = REPO_ROOT / ".bedagent" / "stories"
 MEMORY_JOURNAL = REPO_ROOT / ".bedagent" / "memory" / "journal.ndjson"
-PRODUCT_MILESTONE = "v0.11.0-mvp"
+PRODUCT_MILESTONE = "v0.12.0-mvp"
 
 
 def ensure_mvp_path() -> None:
@@ -104,6 +104,9 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                         "voice-stream",
                         "voice-story-loop",
                         "voice-status",
+                        "voice-vad",
+                        "tts-sentences",
+                        "local-voice-fallback",
                     ],
                 },
             )
@@ -492,7 +495,7 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
         json_response(self, 200, {"ok": True, **voice_status()})
 
     def handle_voice_transcribe(self) -> None:
-        from voice_adapter import transcribe_file, transcribe_stream
+        from voice_adapter import transcribe_file, transcribe_stream, transcribe_vad
 
         try:
             form = cgi.FieldStorage(
@@ -505,6 +508,7 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             )
             simulate_text = form.getvalue("simulate_transcript")
             want_stream = str(form.getvalue("stream") or "").lower() in {"1", "true", "yes"}
+            want_vad = str(form.getvalue("vad") or "").lower() in {"1", "true", "yes"}
             if simulate_text:
                 text = str(simulate_text).strip()
                 payload: dict[str, Any] = {"text": text, "model": "simulated-asr"}
@@ -516,6 +520,18 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                         {"index": idx, "text": item, "is_final": item == parts[-1]}
                         for idx, item in enumerate(parts, start=1)
                     ]
+                if want_vad:
+                    from voice_adapter import split_text_for_segments
+
+                    parts = split_text_for_segments(text, max(1, text.count("。") + text.count("！") + text.count("？")))
+                    if len(parts) <= 1:
+                        parts = [text]
+                    payload["segments"] = [
+                        {"index": idx, "text": item, "start_ms": (idx - 1) * 1000, "end_ms": idx * 1000}
+                        for idx, item in enumerate(parts, start=1)
+                        if item
+                    ]
+                    payload["utterances"] = [{"text": item, "skipped": False} for item in parts if item]
                 json_response(self, 200, payload)
                 return
             if "audio" not in form:
@@ -533,6 +549,41 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                         encoding="utf-8",
                     )
                 wav = convert_to_wav_if_needed(src)
+                if want_vad:
+                    vad = transcribe_vad(wav)
+                    json_response(
+                        self,
+                        200,
+                        {
+                            "text": vad.text,
+                            "model": vad.model,
+                            "skipped": vad.skipped,
+                            "skip_reason": vad.skip_reason,
+                            "command": vad.command,
+                            "segments": [
+                                {
+                                    "index": item.index,
+                                    "start_ms": item.start_ms,
+                                    "end_ms": item.end_ms,
+                                    "energy": item.energy,
+                                    "path": item.path,
+                                }
+                                for item in vad.segments
+                            ],
+                            "utterances": [
+                                {
+                                    "text": item.text,
+                                    "model": item.model,
+                                    "skipped": item.skipped,
+                                    "skip_reason": item.skip_reason,
+                                    "command": item.command,
+                                    "partials": item.partials,
+                                }
+                                for item in vad.utterances
+                            ],
+                        },
+                    )
+                    return
                 if want_stream:
                     stream = transcribe_stream(wav)
                     json_response(
@@ -572,6 +623,8 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             auto_confirm = str(form.getvalue("auto_confirm") or "1").lower() not in {"0", "false", "no"}
             include_audio = str(form.getvalue("include_audio") or "1").lower() not in {"0", "false", "no"}
             resume = str(form.getvalue("resume") or "").lower() in {"1", "true", "yes"}
+            want_vad = str(form.getvalue("vad") or "").lower() in {"1", "true", "yes"}
+            tts_stream = str(form.getvalue("tts_stream") or "").lower() in {"1", "true", "yes"}
             if resume and not story_id:
                 story_id = resolve_resume_story_id(STORY_ROOT, None, True)
             paths = resolve_story_paths(STORY_ROOT, story_id, title)
@@ -609,6 +662,8 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                     non_interactive=True,
                     quiet=quiet,
                     memory_journal_path=MEMORY_JOURNAL,
+                    vad=want_vad,
+                    tts_stream=tts_stream,
                 )
             response = {
                 "story_id": payload["story_id"],
@@ -623,6 +678,18 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                 "session": payload.get("session"),
                 "bible": payload.get("bible"),
                 "quiet": payload.get("quiet", quiet),
+                "vad": bool(payload.get("vad")),
+                "segments": payload.get("segments") or [],
+                "turns": [
+                    {
+                        "transcript": item.get("transcript", ""),
+                        "applied": item.get("applied", False),
+                        "skipped": item.get("skipped", False),
+                        "agent_reply": item.get("agent_reply", ""),
+                    }
+                    for item in payload.get("turns") or []
+                ],
+                "tts_sentences": payload.get("tts_sentences") or [],
             }
             reply_audio = payload.get("reply_audio")
             if include_audio and reply_audio and Path(reply_audio).exists():
@@ -642,7 +709,29 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                 json_response(self, 400, {"error": "text is required"})
                 return
             config = apply_quiet_config(load_voice_config(), quiet=bool(payload.get("quiet", False)))
+            want_stream = bool(payload.get("stream", False))
             with tempfile.TemporaryDirectory() as tmp:
+                if want_stream:
+                    from voice_adapter import synthesize_speech_stream
+
+                    spoken = synthesize_speech_stream(build_tts_summary(text, config), Path(tmp) / "sentences", config=config)
+                    json_response(
+                        self,
+                        200,
+                        {
+                            "text": spoken.text,
+                            "model": spoken.model,
+                            "sentences": [
+                                {
+                                    "text": item.text,
+                                    "byte_size": item.byte_size,
+                                    "audio_base64": base64.b64encode(Path(item.output_path).read_bytes()).decode("ascii"),
+                                }
+                                for item in spoken.sentences
+                            ],
+                        },
+                    )
+                    return
                 out = Path(tmp) / "reply.wav"
                 summary = build_tts_summary(text, config)
                 result = synthesize_speech(summary, out, config=config)
