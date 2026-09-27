@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-label="Brain before Hands">
+  <rect width="900" height="520" fill="#0b1020"/>
+  <text x="450" y="70" text-anchor="middle" font-family="Inter,Arial" font-size="38" font-weight="900" fill="#f8fafc">Brain before Hands</text>
+  <g transform="translate(90 140)">
+    <rect width="220" height="220" rx="34" fill="#172554" stroke="#38bdf8" stroke-width="4"/>
+    <path d="M66 126c-26-34-10-82 36-90 34-6 61 10 72 40 36 4 58 30 54 66-4 44-45 68-86 48-30 28-72 20-76-24z" fill="#38bdf8" opacity=".35"/>
+    <circle cx="88" cy="110" r="8" fill="#7dd3fc"/>
+    <circle cx="130" cy="84" r="8" fill="#7dd3fc"/>
+    <circle cx="158" cy="132" r="8" fill="#7dd3fc"/>
+    <path d="M88 110l42-26 28 48" stroke="#7dd3fc" stroke-width="4" fill="none"/>
+    <text x="110" y="260" text-anchor="middle" font-family="Inter,Arial" font-size="24" font-weight="800" fill="#e0f2fe">Dream</text>
+  </g>
+  <g transform="translate(340 150)">
+    <rect width="220" height="200" rx="44" fill="#4c1d95" stroke="#c4b5fd" stroke-width="4"/>
+    <path d="M42 105c46-60 98-62 146 0v44H42z" fill="#c4b5fd" opacity=".9"/>
+    <text x="110" y="253" text-anchor="middle" font-family="Inter,Arial" font-size="24" font-weight="800" fill="#ede9fe">Blanket</text>
+  </g>
+  <g transform="translate(590 140)">
+    <rect width="220" height="220" rx="34" fill="#052e16" stroke="#86efac" stroke-width="4"/>
+    <path d="M52 140c34-34 62-46 94-34" stroke="#86efac" stroke-width="14" stroke-linecap="round" fill="none"/>
+    <path d="M82 170c36-20 66-24 92-10" stroke="#86efac" stroke-width="14" stroke-linecap="round" fill="none"/>
+    <rect x="62" y="54" width="104" height="44" rx="12" fill="#bbf7d0"/>
+    <text x="110" y="260" text-anchor="middle" font-family="Inter,Arial" font-size="24" font-weight="800" fill="#dcfce7">Hands</text>
+  </g>
+  <path d="M315 250h58M565 250h58" stroke="#e0f2fe" stroke-width="7" stroke-linecap="round"/>
+</svg>
