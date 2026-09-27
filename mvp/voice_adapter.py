@@ -123,6 +123,8 @@ def load_voice_config(path: Path | None = None) -> dict[str, Any]:
     payload.setdefault("vad_padding_ms", 80)
     payload.setdefault("local_asr_command", "")
     payload.setdefault("local_tts_command", "")
+    payload.setdefault("open_mic_max_turns", 12)
+    payload.setdefault("open_mic_silence_ms", 1200)
     return payload
 
 
@@ -151,6 +153,24 @@ def require_dashscope():
             "dashscope SDK not installed. Run: pip install -r mvp/requirements-voice.txt"
         ) from exc
     return dashscope
+
+
+def dashscope_recognition_class():
+    from dashscope.audio.asr import Recognition
+
+    return Recognition
+
+
+def dashscope_stream_classes():
+    from dashscope.audio.asr import Recognition, RecognitionCallback
+
+    return Recognition, RecognitionCallback
+
+
+def dashscope_synthesizer_class():
+    from dashscope.audio.tts_v2 import SpeechSynthesizer
+
+    return SpeechSynthesizer
 
 
 def get_api_key() -> str:
@@ -259,7 +279,7 @@ def transcribe_file(
             )
 
     configure_dashscope(config)
-    from dashscope.audio.asr import Recognition
+    Recognition = dashscope_recognition_class()
 
     recognition = Recognition(
         model=config["asr_model"],
@@ -339,6 +359,8 @@ def voice_status(config: dict[str, Any] | None = None) -> dict[str, Any]:
         "vad_max_silence_ms": int(config.get("vad_max_silence_ms", 400)),
         "local_asr": local_asr_available(config),
         "local_tts": local_tts_available(config),
+        "open_mic_max_turns": int(config.get("open_mic_max_turns", 12)),
+        "open_mic_silence_ms": int(config.get("open_mic_silence_ms", 1200)),
     }
 
 
@@ -464,7 +486,7 @@ def _transcribe_dashscope_stream(
     if detect_audio_format(audio_path) != "wav":
         return None
     configure_dashscope(config)
-    from dashscope.audio.asr import Recognition, RecognitionCallback
+    Recognition, RecognitionCallback = dashscope_stream_classes()
 
     collected: list[str] = []
     errors: list[str] = []
@@ -582,7 +604,7 @@ def synthesize_speech(
             return local
 
     configure_dashscope(config)
-    from dashscope.audio.tts_v2 import SpeechSynthesizer
+    SpeechSynthesizer = dashscope_synthesizer_class()
 
     synthesizer = SpeechSynthesizer(
         model=config["tts_model"],
@@ -619,7 +641,34 @@ SLASH_BY_COMMAND = {
     "characters": "/characters",
     "answer": "/answer",
     "resume": "/resume",
+    "listen": "/listen",
+    "mute": "/mute",
 }
+
+
+@dataclass
+class OpenMicState:
+    listening: bool = True
+    paused: bool = False
+    stop_reason: str = ""
+
+
+def apply_open_mic_command(command: str | None, state: OpenMicState | None = None) -> OpenMicState:
+    current = state or OpenMicState()
+    if not command:
+        return current
+    if command in {"/quit", "/cancel"}:
+        current.listening = False
+        current.paused = False
+        current.stop_reason = command
+    elif command in {"/mute", "/pause"}:
+        current.paused = True
+        current.stop_reason = command
+    elif command in {"/listen", "/continue"}:
+        current.listening = True
+        current.paused = False
+        current.stop_reason = ""
+    return current
 
 
 def map_voice_command(text: str, config: dict[str, Any]) -> str | None:

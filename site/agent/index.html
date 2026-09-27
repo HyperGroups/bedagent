@@ -55,7 +55,7 @@
           <button class="mode-card" type="button" data-mode="voice" role="tab" aria-selected="false">
             <span class="mode-icon">🎙️</span>
             <h3>语音口述</h3>
-            <p>DashScope / 本地 Whisper · 静音自动停 · VAD 分轮</p>
+            <p>持续开麦 · 静音自动停 · VAD 分轮 · DashScope / 本地 Whisper</p>
             <span class="mode-tag">百炼 · 可选</span>
           </button>
         </div>
@@ -129,6 +129,10 @@
               <label class="quiet-toggle">
                 <input type="checkbox" id="chk-vad" checked />
                 自动分轮（VAD）
+              </label>
+              <label class="quiet-toggle">
+                <input type="checkbox" id="chk-open-mic" />
+                持续开麦
               </label>
               <audio id="playback" controls class="hidden"></audio>
               <div id="voice-partials" class="voice-partials" aria-live="polite"></div>

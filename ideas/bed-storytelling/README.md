@@ -94,7 +94,7 @@ python3 mvp/bedagent_mvp.py story list
 
 ## 为什么暂时不进主线
 
-当前 product milestone 仍是工程闭环 MVP（v0.12）。
+当前 product milestone 仍是工程闭环 MVP（v0.13）。
 story 模式作为 **平行情景适配器** 验证控制层可迁移性，不替代 sandbox-first 主线。
 
 ## 进入主线的条件
@@ -114,3 +114,4 @@ story 模式作为 **平行情景适配器** 验证控制层可迁移性，不�
 6. 会话恢复与记忆合流：`story resume`、口述写入 journal、`search` 统一检索。 ✅ v0.10
 7. 夜间短反馈：quiet TTS + night pillow。 ✅ v0.10
 8. 语音分轮与本地回退：VAD、句子 TTS、Whisper/Piper auto fallback。 ✅ v0.12
+9. 持续开麦：跨轮听写直到关麦/退出。 ✅ v0.13

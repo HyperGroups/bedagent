@@ -641,3 +641,30 @@ product_milestone: v0.12.0-mvp
 - Whisper / Piper 为可选二进制，测试默认 sidecar + `BEDAGENT_TTS_SIMULATE`；
 - GitHub Pages 仍需本地 `bedagent_web.py`。
 
+## ADR-0021：v0.13 持续开麦与听/关麦口令
+
+```yaml
+date: 2026-09-27
+design_version: D0.1
+status: accepted
+product_milestone: v0.13.0-mvp
+```
+
+### 决策
+
+在 v0.12 段内 VAD 之上，把语音做成可跨轮保持的听写会话：
+
+1. `run_open_mic_story()` 把一段或多段录音当连续开麦，VAD 分轮直到 `/mute` `/quit` 或达到上限；
+2. 口令「开麦 / 关麦 / 开始听 / 别听了」只改听写状态，不写 bible；
+3. Web 勾选「持续开麦」后，静音自动停会立刻再开下一轮；
+4. DashScope SDK 改为可注入 helper，无 `dashscope` 安装也能跑语音单测。
+
+### 原因
+
+合并进 main 之后继续推进：躺着说话不应每轮再按一次按钮。
+
+### 边界
+
+- 浏览器仍是「停一下再自动开」，不是一条永不中断的麦克风流；
+- 真麦克风依赖 sounddevice，测试用拼接 wav + sidecar。
+

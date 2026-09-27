@@ -213,8 +213,8 @@ python3 mvp/bedagent_mvp.py story voice-once \
   --audio-file input.wav \
   --auto-confirm
 
-python3 mvp/bedagent_mvp.py story voice --title "会做梦的维修AI" --mic --play-reply
-python3 mvp/bedagent_mvp.py story voice-once --resume --audio-file input.wav --quiet --auto-confirm --stream --vad
+python3 mvp/bedagent_mvp.py story voice --title "会做梦的维修AI" --mic --play-reply --open-mic
+python3 mvp/bedagent_mvp.py story voice-once --resume --audio-file input.wav --quiet --auto-confirm --stream --vad --open-mic
 python3 mvp/bedagent_mvp.py voice transcribe --audio-file input.wav --stream --vad
 python3 mvp/bedagent_mvp.py voice speak --text "收到。继续讲。" --stream
 python3 mvp/bedagent_mvp.py voice status
