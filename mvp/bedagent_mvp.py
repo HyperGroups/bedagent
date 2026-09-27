@@ -1402,6 +1402,11 @@ def parse_args() -> argparse.Namespace:
         help="use microphone push-to-talk in story voice mode",
     )
     story.add_argument(
+        "--open-mic",
+        action="store_true",
+        help="keep listening: VAD-split long audio and continue until mute/quit",
+    )
+    story.add_argument(
         "--play-reply",
         action="store_true",
         help="auto-play TTS reply audio when sounddevice is available",
@@ -2120,6 +2125,7 @@ def main() -> int:
                     use_llm=args.use_llm,
                     memory_journal_path=memory_journal,
                     quiet=args.quiet,
+                    open_mic=args.open_mic,
                 )
             except Exception as exc:
                 print(f"Voice error: {exc}")
@@ -2303,24 +2309,41 @@ def main() -> int:
             paths.root.mkdir(parents=True, exist_ok=True)
             session, bible = load_story_state(paths, args.title)
             try:
-                from story_session import run_voice_story_once
+                from story_session import run_open_mic_story, run_voice_story_once
 
-                payload = run_voice_story_once(
-                    paths,
-                    Path(args.audio_file),
-                    session,
-                    bible,
-                    policy=story_policy,
-                    voice_config=voice_config,
-                    voice_config_path=Path(args.voice_config),
-                    auto_confirm=args.auto_confirm,
-                    non_interactive=args.non_interactive,
-                    use_llm=args.use_llm,
-                    memory_journal_path=memory_journal,
-                    quiet=args.quiet,
-                    vad=args.vad,
-                    tts_stream=args.tts_stream,
-                )
+                if args.open_mic:
+                    payload = run_open_mic_story(
+                        paths,
+                        [Path(args.audio_file)],
+                        session,
+                        bible,
+                        policy=story_policy,
+                        voice_config=voice_config,
+                        voice_config_path=Path(args.voice_config),
+                        auto_confirm=args.auto_confirm,
+                        non_interactive=args.non_interactive,
+                        use_llm=args.use_llm,
+                        memory_journal_path=memory_journal,
+                        quiet=args.quiet,
+                        tts_stream=args.tts_stream,
+                    )
+                else:
+                    payload = run_voice_story_once(
+                        paths,
+                        Path(args.audio_file),
+                        session,
+                        bible,
+                        policy=story_policy,
+                        voice_config=voice_config,
+                        voice_config_path=Path(args.voice_config),
+                        auto_confirm=args.auto_confirm,
+                        non_interactive=args.non_interactive,
+                        use_llm=args.use_llm,
+                        memory_journal_path=memory_journal,
+                        quiet=args.quiet,
+                        vad=args.vad,
+                        tts_stream=args.tts_stream,
+                    )
             except Exception as exc:
                 print(f"Voice error: {exc}")
                 return 1
@@ -2328,6 +2351,9 @@ def main() -> int:
             print("=== bedagent story voice-once ===")
             print(f"story_id: {payload['story_id']}")
             print(f"asr_model: {payload.get('asr_model', '-')}")
+            if payload.get("open_mic"):
+                print(f"open_mic: listening={payload.get('listening')} paused={payload.get('paused')} stop={payload.get('stop_reason') or '-'}")
+                print(f"open_mic_turns: {len(payload.get('turns') or [])}")
             if payload.get("skipped"):
                 print(f"skipped: {payload.get('skip_reason', True)}")
             if payload.get("vad"):

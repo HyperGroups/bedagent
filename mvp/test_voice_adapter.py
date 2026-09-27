@@ -44,8 +44,10 @@ class VoiceAdapterTests(unittest.TestCase):
 
     @mock.patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-key"}, clear=False)
     @mock.patch("voice_adapter.configure_dashscope")
-    @mock.patch("dashscope.audio.asr.Recognition")
-    def test_transcribe_file_success(self, recognition_cls: mock.Mock, _configure: mock.Mock) -> None:
+    @mock.patch("voice_adapter.dashscope_recognition_class")
+    def test_transcribe_file_success(self, recognition_cls_fn: mock.Mock, _configure: mock.Mock) -> None:
+        recognition_cls = mock.Mock()
+        recognition_cls_fn.return_value = recognition_cls
         instance = recognition_cls.return_value
         result = mock.Mock()
         result.status_code = HTTPStatus.OK
@@ -62,8 +64,10 @@ class VoiceAdapterTests(unittest.TestCase):
 
     @mock.patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-key"}, clear=False)
     @mock.patch("voice_adapter.configure_dashscope")
-    @mock.patch("dashscope.audio.tts_v2.SpeechSynthesizer")
-    def test_synthesize_speech_writes_file(self, synth_cls: mock.Mock, _configure: mock.Mock) -> None:
+    @mock.patch("voice_adapter.dashscope_synthesizer_class")
+    def test_synthesize_speech_writes_file(self, synth_cls_fn: mock.Mock, _configure: mock.Mock) -> None:
+        synth_cls = mock.Mock()
+        synth_cls_fn.return_value = synth_cls
         instance = synth_cls.return_value
         instance.call.return_value = b"fake-audio"
 

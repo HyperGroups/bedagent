@@ -92,4 +92,5 @@ python3 mvp/bedagent_mvp.py story voice \
 3. 床边手机/Web 推送音频入口； ✅ `/api/voice/story` + 按住说话
 4. 离线 fallback（本地 Whisper + Piper）。 ✅ `provider: auto` / `BEDAGENT_WHISPER_CMD` / `BEDAGENT_PIPER_CMD`（v0.12）
 5. 录音内 VAD 自动分轮。 ✅ `--vad` / Web 自动分轮（v0.12）
-6. 持续开麦：麦克风保持开启、跨轮自动切段。
+6. 持续开麦：麦克风保持开启、跨轮自动切段。 ✅ `story voice --open-mic` / Web「持续开麦」（v0.13）
+7. 一条永不中断的浏览器麦克风流 + 服务端实时 partials。

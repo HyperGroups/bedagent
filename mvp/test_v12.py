@@ -143,7 +143,7 @@ class VoiceWebV12Tests(unittest.TestCase):
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as resp:
                 health = json.loads(resp.read().decode("utf-8"))
             self.assertEqual(health["product_milestone"], PRODUCT_MILESTONE)
-            self.assertEqual(PRODUCT_MILESTONE, "v0.12.0-mvp")
+            self.assertEqual(PRODUCT_MILESTONE, "v0.13.0-mvp")
             self.assertIn("voice-vad", health["features"])
             self.assertIn("tts-sentences", health["features"])
 

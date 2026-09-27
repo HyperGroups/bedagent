@@ -1731,6 +1731,142 @@ def run_voice_story_once(
     )
 
 
+def run_open_mic_story(
+    paths: StoryPaths,
+    audio_files: list[Path],
+    session: dict[str, Any],
+    bible: dict[str, Any],
+    policy: dict[str, Any] | None = None,
+    voice_config: dict[str, Any] | None = None,
+    voice_config_path: Path | None = None,
+    auto_confirm: bool = False,
+    non_interactive: bool = False,
+    use_llm: bool = False,
+    memory_journal_path: Path | None = None,
+    quiet: bool = False,
+    tts_stream: bool = False,
+    max_turns: int | None = None,
+) -> dict[str, Any]:
+    """Treat one or more recordings as a continuous open-mic session."""
+    from voice_adapter import (
+        OpenMicState,
+        apply_open_mic_command,
+        apply_quiet_config,
+        load_voice_config,
+        transcribe_vad,
+    )
+
+    policy = policy or load_story_blanket_policy()
+    voice_config = apply_quiet_config(voice_config or load_voice_config(voice_config_path), quiet=quiet)
+    limit = max(1, int(max_turns or voice_config.get("open_mic_max_turns", 12)))
+    state = OpenMicState()
+    turns: list[dict[str, Any]] = []
+    current_session, current_bible = session, bible
+
+    for audio_path in audio_files:
+        if not state.listening:
+            break
+        vad_result = transcribe_vad(
+            Path(audio_path),
+            config=voice_config,
+            config_path=voice_config_path,
+            output_dir=paths.voice / "open-mic",
+        )
+        vad_meta = {
+            "segment_count": len(vad_result.segments),
+            "segments": [
+                {
+                    "index": item.index,
+                    "start_ms": item.start_ms,
+                    "end_ms": item.end_ms,
+                    "energy": item.energy,
+                    "path": item.path,
+                }
+                for item in vad_result.segments
+            ],
+        }
+        utterances = vad_result.utterances or []
+        if not utterances and vad_result.text:
+            from voice_adapter import transcribe_stream
+
+            utterances = [transcribe_stream(Path(audio_path), config=voice_config, config_path=voice_config_path)]
+        for utterance in utterances:
+            if not state.listening:
+                break
+            command = utterance.command
+            if state.paused and command not in {"/listen", "/continue", "/quit", "/cancel"}:
+                turns.append(
+                    {
+                        "story_id": paths.root.name,
+                        "transcript": utterance.text,
+                        "applied": False,
+                        "skipped": True,
+                        "skip_reason": "paused",
+                        "agent_reply": "（开麦已暂停，说「开始听」继续）",
+                        "session": current_session,
+                        "bible": current_bible,
+                    }
+                )
+                continue
+            payload = _complete_voice_story_turn(
+                paths,
+                Path(utterance.audio_path),
+                utterance,
+                current_session,
+                current_bible,
+                policy=policy,
+                voice_config=voice_config,
+                auto_confirm=auto_confirm,
+                non_interactive=non_interactive,
+                use_llm=use_llm,
+                memory_journal_path=memory_journal_path,
+                tts_stream=tts_stream,
+                vad_meta=vad_meta,
+            )
+            current_session = payload["session"]
+            current_bible = payload["bible"]
+            if payload.get("command"):
+                state = apply_open_mic_command(payload["command"], state)
+                payload["open_mic"] = {
+                    "listening": state.listening,
+                    "paused": state.paused,
+                    "stop_reason": state.stop_reason,
+                }
+            turns.append(payload)
+            applied_count = sum(1 for item in turns if item.get("applied"))
+            if applied_count >= limit:
+                state.listening = False
+                state.stop_reason = state.stop_reason or "max_turns"
+                break
+
+    last = turns[-1] if turns else {
+        "story_id": paths.root.name,
+        "transcript": "",
+        "applied": False,
+        "skipped": True,
+        "skip_reason": "silence",
+        "agent_reply": "（开麦未收到口述）",
+        "session": session,
+        "bible": bible,
+    }
+    result = dict(last)
+    result.update(
+        {
+            "open_mic": True,
+            "listening": state.listening,
+            "paused": state.paused,
+            "stop_reason": state.stop_reason,
+            "turns": turns,
+            "applied": any(item.get("applied") for item in turns),
+            "applied_count": sum(1 for item in turns if item.get("applied")),
+            "session": current_session,
+            "bible": current_bible,
+            "transcript": " ".join(item.get("transcript", "") for item in turns if item.get("transcript")).strip(),
+        }
+    )
+    return result
+
+
 def run_story_voice_tell(
     story_root: Path,
     story_id: str | None = None,
@@ -1748,6 +1884,7 @@ def run_story_voice_tell(
     use_llm: bool = False,
     memory_journal_path: Path | None = None,
     quiet: bool = False,
+    open_mic: bool = False,
 ) -> dict[str, Any]:
     from voice_adapter import (
         apply_quiet_config,
@@ -1775,7 +1912,9 @@ def run_story_voice_tell(
     output_fn(f"标题: {session['title']} | 回合: {session.get('turn_count', 0)}")
     output_fn(f"ASR: {voice_config['asr_model']} | TTS: {voice_config['tts_model']} / {voice_config['tts_voice']}")
     output_fn("提供音频文件路径，输入 mic 录音，或口述文本路径 fallback。")
-    output_fn("语音口令：暂停 / 继续 / 取消 / 汇报一下 / 扩写 / 夜间模式")
+    if open_mic:
+        output_fn("持续开麦：长录音会按 VAD 分轮；口令「关麦 / 开麦 / 退出」。")
+    output_fn("语音口令：暂停 / 继续 / 取消 / 汇报一下 / 扩写 / 夜间模式 / 开麦 / 关麦")
     output_fn("命令: /text /answer /draft /expand /characters /export /recap /quiet /questions /help /quit")
     output_fn("")
 
@@ -1888,7 +2027,33 @@ def run_story_voice_tell(
         return result
 
     if seed_audio:
-        handle_voice_turn(seed_audio.expanduser().resolve())
+        if open_mic:
+            payload = run_open_mic_story(
+                paths,
+                [seed_audio.expanduser().resolve()],
+                session,
+                bible,
+                policy=policy,
+                voice_config=voice_config,
+                voice_config_path=voice_config_path,
+                auto_confirm=auto_confirm,
+                non_interactive=non_interactive,
+                use_llm=use_llm,
+                memory_journal_path=memory_journal_path,
+                quiet=quiet,
+            )
+            session = payload["session"]
+            bible = payload["bible"]
+            last_result = payload.get("turns")[-1].get("result") if payload.get("turns") else None
+            output_fn(payload.get("agent_reply", ""))
+            if not payload.get("listening"):
+                output_fn(f"（开麦结束：{payload.get('stop_reason') or 'quit'}）")
+                recap = build_story_recap(bible, session)
+                recap["story_id"] = paths.root.name
+                recap["open_mic"] = payload
+                return recap
+        else:
+            handle_voice_turn(seed_audio.expanduser().resolve())
 
     while True:
         raw = input_fn("音频路径 / mic / /text / /quit: ").strip()
@@ -1896,6 +2061,28 @@ def run_story_voice_tell(
             if use_mic:
                 audio = resolve_audio_input("mic")
                 if audio is None:
+                    continue
+                if open_mic:
+                    payload = run_open_mic_story(
+                        paths,
+                        [audio],
+                        session,
+                        bible,
+                        policy=policy,
+                        voice_config=voice_config,
+                        voice_config_path=voice_config_path,
+                        auto_confirm=auto_confirm,
+                        non_interactive=non_interactive,
+                        use_llm=use_llm,
+                        memory_journal_path=memory_journal_path,
+                        quiet=quiet,
+                    )
+                    session = payload["session"]
+                    bible = payload["bible"]
+                    output_fn(payload.get("agent_reply", ""))
+                    if not payload.get("listening"):
+                        output_fn(f"（开麦结束：{payload.get('stop_reason') or 'quit'}）")
+                        break
                     continue
                 outcome = handle_voice_turn(audio)
             else:
@@ -1910,6 +2097,28 @@ def run_story_voice_tell(
             elif raw.lower() == "mic" or Path(raw).expanduser().exists():
                 audio = resolve_audio_input(raw)
                 if audio is None:
+                    continue
+                if open_mic:
+                    payload = run_open_mic_story(
+                        paths,
+                        [audio],
+                        session,
+                        bible,
+                        policy=policy,
+                        voice_config=voice_config,
+                        voice_config_path=voice_config_path,
+                        auto_confirm=auto_confirm,
+                        non_interactive=non_interactive,
+                        use_llm=use_llm,
+                        memory_journal_path=memory_journal_path,
+                        quiet=quiet,
+                    )
+                    session = payload["session"]
+                    bible = payload["bible"]
+                    output_fn(payload.get("agent_reply", ""))
+                    if not payload.get("listening"):
+                        output_fn(f"（开麦结束：{payload.get('stop_reason') or 'quit'}）")
+                        break
                     continue
                 outcome = handle_voice_turn(audio)
             else:
@@ -1989,8 +2198,11 @@ def run_story_voice_tell(
                     except ValueError as exc:
                         output_fn(f"（{exc}）")
                 continue
-            if command in {"/pause", "/continue"}:
-                output_fn("（已收到语音控制口令）")
+            if command in {"/pause", "/continue", "/mute", "/listen"}:
+                if command in {"/mute", "/pause"}:
+                    output_fn("（开麦已暂停，说「开始听」继续）")
+                else:
+                    output_fn("（开麦继续听）")
                 continue
             output_fn(f"（未知命令: {command}）")
             continue

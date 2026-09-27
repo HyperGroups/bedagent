@@ -18,6 +18,8 @@
   "vad_padding_ms": 80,
   "local_asr_command": "",
   "local_tts_command": "",
+  "open_mic_max_turns": 12,
+  "open_mic_silence_ms": 1200,
   "max_tts_chars": 220,
   "quiet_mode": false,
   "quiet_max_tts_chars": 72,
@@ -42,6 +44,8 @@
     "quiet": ["小声点", "夜间模式", "别出声"],
     "characters": ["人物卡", "有谁"],
     "answer": ["对齐", "回答问题", "我来回答"],
-    "resume": ["恢复最近", "接着上次", "resume"]
+    "resume": ["恢复最近", "接着上次", "resume"],
+    "listen": ["开始听", "开麦", "继续听"],
+    "mute": ["闭嘴", "关麦", "别听了"]
   }
 }

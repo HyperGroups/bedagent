@@ -22,7 +22,7 @@ REPO_ROOT = MVP_DIR.parent
 SITE_DIR = REPO_ROOT / "site"
 STORY_ROOT = REPO_ROOT / ".bedagent" / "stories"
 MEMORY_JOURNAL = REPO_ROOT / ".bedagent" / "memory" / "journal.ndjson"
-PRODUCT_MILESTONE = "v0.12.0-mvp"
+PRODUCT_MILESTONE = "v0.13.0-mvp"
 
 
 def ensure_mvp_path() -> None:
@@ -107,6 +107,7 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                         "voice-vad",
                         "tts-sentences",
                         "local-voice-fallback",
+                        "voice-open-mic",
                     ],
                 },
             )
@@ -605,7 +606,13 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             json_response(self, 500, {"error": str(exc)})
 
     def handle_voice_story(self) -> None:
-        from story_session import load_story_state, resolve_resume_story_id, resolve_story_paths, run_voice_story_once
+        from story_session import (
+            load_story_state,
+            resolve_resume_story_id,
+            resolve_story_paths,
+            run_open_mic_story,
+            run_voice_story_once,
+        )
 
         try:
             form = cgi.FieldStorage(
@@ -625,6 +632,7 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
             resume = str(form.getvalue("resume") or "").lower() in {"1", "true", "yes"}
             want_vad = str(form.getvalue("vad") or "").lower() in {"1", "true", "yes"}
             tts_stream = str(form.getvalue("tts_stream") or "").lower() in {"1", "true", "yes"}
+            open_mic = str(form.getvalue("open_mic") or "").lower() in {"1", "true", "yes"}
             if resume and not story_id:
                 story_id = resolve_resume_story_id(STORY_ROOT, None, True)
             paths = resolve_story_paths(STORY_ROOT, story_id, title)
@@ -653,18 +661,31 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                             encoding="utf-8",
                         )
                     wav = convert_to_wav_if_needed(src)
-                payload = run_voice_story_once(
-                    paths,
-                    wav,
-                    session,
-                    bible,
-                    auto_confirm=auto_confirm,
-                    non_interactive=True,
-                    quiet=quiet,
-                    memory_journal_path=MEMORY_JOURNAL,
-                    vad=want_vad,
-                    tts_stream=tts_stream,
-                )
+                if open_mic:
+                    payload = run_open_mic_story(
+                        paths,
+                        [wav],
+                        session,
+                        bible,
+                        auto_confirm=auto_confirm,
+                        non_interactive=True,
+                        quiet=quiet,
+                        memory_journal_path=MEMORY_JOURNAL,
+                        tts_stream=tts_stream,
+                    )
+                else:
+                    payload = run_voice_story_once(
+                        paths,
+                        wav,
+                        session,
+                        bible,
+                        auto_confirm=auto_confirm,
+                        non_interactive=True,
+                        quiet=quiet,
+                        memory_journal_path=MEMORY_JOURNAL,
+                        vad=want_vad,
+                        tts_stream=tts_stream,
+                    )
             response = {
                 "story_id": payload["story_id"],
                 "transcript": payload.get("transcript", ""),
@@ -690,6 +711,10 @@ class BedagentWebHandler(SimpleHTTPRequestHandler):
                     for item in payload.get("turns") or []
                 ],
                 "tts_sentences": payload.get("tts_sentences") or [],
+                "open_mic": bool(payload.get("open_mic")),
+                "listening": payload.get("listening", True),
+                "paused": payload.get("paused", False),
+                "stop_reason": payload.get("stop_reason", ""),
             }
             reply_audio = payload.get("reply_audio")
             if include_audio and reply_audio and Path(reply_audio).exists():

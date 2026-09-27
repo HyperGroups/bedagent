@@ -2,8 +2,8 @@
 
 ```text
 Design Version: D0.1
-Product Milestone: v0.12.0-mvp (prototype)
-Status: implemented (VAD utterance split, local voice fallback, sentence TTS, silence auto-stop web)
+Product Milestone: v0.13.0-mvp (prototype)
+Status: implemented (continuous open-mic session, listen/mute commands, dashscope-free voice tests)
 ```
 
 This document tracks the first executable bedagent loop in this repository.
@@ -119,6 +119,10 @@ python3 mvp/bedagent_mvp.py run --idea-file mvp/sample_idea.txt --non-interactiv
    Voice turns append `kind=voice` to the memory journal.
 41. **Web silence auto-stop**  
    Agent voice mode can stop recording after ~1.2s of post-speech silence.
+42. **Continuous open-mic**  
+   `story voice --open-mic` / `story voice-once --open-mic` keeps a listening session; VAD turns continue until 关麦 / 退出.
+43. **Listen / mute commands**  
+   开麦 / 关麦 pause or resume the bedside mic loop without writing bible.
 
 ## Output contract
 
@@ -189,11 +193,12 @@ python3 mvp/bedagent_mvp.py worktree retention-report --blanket-policy mvp/blank
 - Chapter expansion stays in the draft sandbox; it does not rewrite the bible without a later oral turn.
 - No container executor yet; live execution currently focuses on git worktree path.
 - Memory retrieval is weighted lexical-semantic (TF-IDF, CJK-aware) with pre-filters; no embedding/rerank pipeline yet.
-- Browser VAD auto-stop is energy-based, not a continuous open-mic session.
+- Browser open-mic still restarts after each auto-stop; it is not a single always-on MediaRecorder session.
+- VAD is PCM energy, not a neural speech detector.
 
 ## Next implementation steps
 
 1. Add embedding-backed retrieval and rerank for memory/story search.
 2. Add scheduled/automatic retention enforcement using existing report/export path.
 3. Add container/VM adapters behind the same side-effect gate.
-4. Add continuous open-mic VAD that keeps the mic open across turns without a hold button.
+4. Keep a true always-on MediaRecorder with server-side streaming partials.

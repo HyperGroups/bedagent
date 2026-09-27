@@ -372,6 +372,12 @@ function vadEnabled() {
   return document.getElementById("chk-vad")?.checked !== false;
 }
 
+function openMicEnabled() {
+  return Boolean(document.getElementById("chk-open-mic")?.checked);
+}
+
+let openMicArmed = false;
+
 function stopRecordMeter() {
   if (autoStopRaf) {
     cancelAnimationFrame(autoStopRaf);
@@ -453,7 +459,20 @@ async function startRecording() {
     els.recordStatus.classList.remove("recording");
     stream.getTracks().forEach((t) => t.stop());
     if (voiceLoopEnabled()) {
-      handleVoiceClosedLoop().catch((err) => appendSystem(err.message || String(err)));
+      handleVoiceClosedLoop()
+        .catch((err) => appendSystem(err.message || String(err)))
+        .finally(() => {
+          if (openMicArmed && openMicEnabled() && mediaRecorder?.state !== "recording") {
+            const restart = () => startRecording().catch(console.error);
+            if (els.playback && !els.playback.paused && !quietEnabled()) {
+              els.playback.addEventListener("ended", restart, { once: true });
+            } else {
+              setTimeout(restart, 250);
+            }
+          }
+        });
+    } else if (openMicArmed && openMicEnabled()) {
+      startRecording().catch(console.error);
     }
   };
   mediaRecorder.start();
@@ -482,6 +501,7 @@ async function handleVoiceClosedLoop() {
   form.append("auto_confirm", "1");
   form.append("include_audio", "1");
   form.append("vad", vadEnabled() ? "1" : "0");
+  form.append("open_mic", openMicEnabled() ? "1" : "0");
   const res = await fetch(`${apiBase}/api/voice/story`, { method: "POST", body: form });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "voice story failed");
@@ -493,6 +513,12 @@ async function handleVoiceClosedLoop() {
     appendSystem(`已跳过：${data.skip_reason || data.command || "silence"}`);
     if (data.command === "/recap" || data.command === "/resume") {
       handleResumeLatest();
+    }
+    if (data.command === "/mute" || data.command === "/quit" || data.listening === false) {
+      openMicArmed = false;
+      const box = document.getElementById("chk-open-mic");
+      if (box) box.checked = false;
+      appendSystem("持续开麦已停止");
     }
     return;
   }
@@ -663,6 +689,12 @@ function bindEvents() {
       return;
     }
     startRecording().catch(console.error);
+  });
+  document.getElementById("chk-open-mic")?.addEventListener("change", () => {
+    openMicArmed = openMicEnabled();
+    if (openMicArmed && mediaRecorder?.state !== "recording") {
+      startRecording().catch(console.error);
+    }
   });
   document.getElementById("btn-voice-transcribe").addEventListener("click", handleVoiceTranscribe);
 
